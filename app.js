@@ -1,4 +1,9 @@
-const APP_CACHE_NAME = 'ancona-guida-v5.1-1401';
+// State variables
+let lang = 'it';
+let currentSection = 'home';
+let detailIndex = null;
+
+const APP_CACHE_NAME = 'ancona-guida-v5.1-1400';
 const PHOTO_BASE = './img/';
 const HOST_PHONE = '3356750269';
 const HOST_EMAIL = 'anconacentro@yahoo.com';
@@ -761,3 +766,9 @@ const appData = {
       }
       render();
     });
+
+  </script>
+</body>
+</html>
+
+       
