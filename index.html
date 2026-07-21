@@ -1,0 +1,31 @@
+<div class="map-fullscreen-overlay" id="map-fullscreen-overlay">
+    <div class="map-fs-header">
+        <span class="map-fs-title" id="map-fs-title">🗺️ Mappa</span>
+        <button class="map-fs-close" id="map-fs-close">✕ Chiudi</button>
+    </div>
+    <div id="fullscreenMap"></div>
+    <div class="fs-gps-container gps-container" id="fs-gps-container">
+        <div class="gps-box"><div class="gps-row"><div class="gps-icon">🧭</div><div class="gps-text"></div><div class="gps-buttons"></div></div></div>
+        <div class="gps-icon-overlay" id="fs-gps-overlay-icon">📍</div>
+    </div>
+</div>
+
+<div class="copyright-footer">© 2026 Affittacamere Ancona Centro · Guida V5.0 20/07/26 10:00 · All rights reserved</div>
+
+<div id="sw-update-banner" role="alert" aria-live="polite">
+    <div class="sw-banner-text">
+        <strong>🔄 Aggiornamento disponibile</strong>
+        Nuova versione della guida pronta.
+    </div>
+    <button class="sw-banner-btn" id="sw-update-btn">Aggiorna</button>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="./app.js" defer></script>
+
+----
+Per copiarlo sull'iPad:
+1.  Tocca e tieni premuto sul testo sopra → "Seleziona tutto" → "Copia"
+2.  Apri l'app File → "Sfoglia" → "Su iPad" → Crea nuovo file di testo
+3.  Incolla e rinomina in index.html
+Vuoi che continui con app.js (è lungo, ~180KB)? Oppure preferisci un altro metodo — ad esempio ti invio i file via email o li carico su un servizio di paste temporaneo?
