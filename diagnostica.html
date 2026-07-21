@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostica Ancona Centro</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 20px; background: #f5f5f5; max-width: 800px; margin: 0 auto; }
+    .box { background: white; padding: 20px; border-radius: 12px; margin: 15px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    h1 { color: #0B1F33; }
+    h3 { margin-top: 0; }
+    .ok { color: #28a745; font-weight: bold; }
+    .err { color: #dc3545; font-weight: bold; }
+    .warn { color: #ffc107; font-weight: bold; }
+    pre { background: #f8f9fa; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; border: 1px solid #e5e7eb; }
+    button { padding: 12px 24px; border: none; border-radius: 8px; background: #0B1F33; color: white; cursor: pointer; margin: 5px; font-size: 14px; }
+    button:hover { background: #1a3a5c; }
+    .step { display: flex; align-items: flex-start; gap: 12px; margin: 10px 0; }
+    .step-num { background: #0B1F33; color: white; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <h1>🔧 Diagnostica Ancona Centro</h1>
+
+  <div class="box">
+    <h3>Stato caricamento</h3>
+    <div id="status">Analisi in corso...</div>
+  </div>
+
+  <div class="box">
+    <h3>Test app.js</h3>
+    <button onclick="testAppJs()">📡 Carica app.js</button>
+    <button onclick="testAppJsNoCache()">📡 Carica (no cache)</button>
+    <pre id="test-result">Clicca un pulsante per testare...</pre>
+  </div>
+
+  <div class="box">
+    <h3>Console Errori</h3>
+    <pre id="console-log">In attesa di errori...</pre>
+  </div>
+
+  <div class="box">
+    <h3>Info Browser</h3>
+    <pre id="browser-info"></pre>
+  </div>
+
+  <div class="box">
+    <h3>Passaggi per risolvere</h3>
+    <div class="step">
+      <div class="step-num">1</div>
+      <div>Apri la console del browser (F12 → Console) e guarda se ci sono errori rossi</div>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div>Verifica che il file app.js sia stato caricato: clicca "Carica app.js" sopra</div>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div>Se vedi errori di sintassi, il file app.js sul server non è quello corretto</div>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div>Prova a svuotare la cache del browser: Ctrl+Shift+Delete → Svuota cache</div>
+    </div>
+  </div>
+
+  <script>
+    const logEl = document.getElementById('console-log');
+    const statusEl = document.getElementById('status');
+    const testResult = document.getElementById('test-result');
+
+    function log(msg, type='info') {
+      const div = document.createElement('div');
+      div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+      div.className = type;
+      logEl.appendChild(div);
+    }
+
+    window.onerror = function(msg, url, line, col, error) {
+      log('ERRORE JS: ' + msg + ' (riga ' + line + ')', 'err');
+      statusEl.innerHTML = '<span class="err">❌ Errore JavaScript rilevato - vedi Console sotto</span>';
+      return false;
+    };
+
+    window.addEventListener('unhandledrejection', function(e) {
+      log('PROMISE REJECTED: ' + e.reason, 'err');
+    });
+
+    document.getElementById('browser-info').textContent = 
+      'User-Agent: ' + navigator.userAgent + '\n' +
+      'URL: ' + location.href + '\n' +
+      'Protocollo: ' + location.protocol;
+
+    function testAppJs() {
+      testResult.textContent = 'Caricamento app.js...';
+      const script = document.createElement('script');
+      script.src = './app.js';
+      script.onload = function() {
+        testResult.textContent = '✅ app.js caricato con successo!\n';
+        testResult.textContent += 'Variabili globali: ';
+        testResult.textContent += 'APP_CACHE_NAME=' + (typeof APP_CACHE_NAME !== 'undefined' ? 'OK' : 'MANCANTE') + ', ';
+        testResult.textContent += 'appData=' + (typeof appData !== 'undefined' ? 'OK' : 'MANCANTE') + ', ';
+        testResult.textContent += 'sections=' + (typeof sections !== 'undefined' ? 'OK' : 'MANCANTE');
+      };
+      script.onerror = function() {
+        testResult.textContent = '❌ app.js NON trovato o errore di rete!';
+      };
+      document.head.appendChild(script);
+    }
+
+    function testAppJsNoCache() {
+      testResult.textContent = 'Caricamento app.js (no cache)...';
+      const script = document.createElement('script');
+      script.src = './app.js?v=' + Date.now();
+      script.onload = function() {
+        testResult.textContent = '✅ app.js caricato (no cache)!\n';
+        testResult.textContent += 'Verifica che APP_CACHE_NAME sia aggiornato: ' + (typeof APP_CACHE_NAME !== 'undefined' ? APP_CACHE_NAME : 'NON TROVATO');
+      };
+      script.onerror = function() {
+        testResult.textContent = '❌ app.js NON trovato!';
+      };
+      document.head.appendChild(script);
+    }
+
+    setTimeout(function() {
+      if (typeof APP_CACHE_NAME !== 'undefined') {
+        statusEl.innerHTML = '<span class="ok">✅ app.js già caricato - versione: ' + APP_CACHE_NAME + '</span>';
+      } else {
+        statusEl.innerHTML = '<span class="warn">⚠️ app.js non caricato - usa i pulsanti sopra per testare</span>';
+      }
+    }, 500);
+
+    log('Pagina diagnostica pronta');
+  </script>
+</body>
+</html>
