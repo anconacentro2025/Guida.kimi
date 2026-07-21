@@ -596,6 +596,12 @@ const appData = {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function getDataKey(sectionKey) {
+      const map = { 'itinerary': 'mustsee' };
+      return map[sectionKey] || sectionKey;
+    }
+
+
     /* ================================================================
        COMPONENTI DI RENDERING
        ================================================================ */
@@ -635,7 +641,7 @@ const appData = {
       return `<div class="home-screen">
         <div class="hero">
           <h2>${t('welcome')}!</h2>
-          <p>${getText(data.itinerary[0], 'it').substring(0, 120)}...</p>
+          <p>${getText(appData.mustsee[0], 'it').substring(0, 120)}...</p>
           <button class="btn-primary" onclick="showSection('itinerary')">${t('start')} 🚀</button>
         </div>
         <div class="quick-links">
@@ -651,12 +657,12 @@ const appData = {
     }
 
     function renderList(sectionKey) {
-      const items = data[sectionKey];
+      const items = appData[getDataKey(sectionKey)];
       if (!items || !items.length) return `<div class="empty">Nessun contenuto disponibile</div>`;
       return `<div class="list-view">
         <h2>${t(sectionKey)}</h2>
         ${items.map((item, idx) => {
-          const text = getText(item, sectionKey==='itinerary'?'it':sectionKey);
+          const text = getText(item, lang);
           const short = text.substring(0, 180);
           const isLong = text.length > 180;
           return `<article class="card" data-idx="${idx}">
@@ -679,7 +685,7 @@ const appData = {
     }
 
     function renderItineraryDetail(index) {
-      const items = data.itinerary;
+      const items = appData.mustsee;
       const item = items[index];
       if (!item) return showSection('itinerary');
       const prev = items[index-1];
@@ -766,8 +772,3 @@ const appData = {
       }
       render();
     });
-</script>
-</body>
-</html>
-
-       
