@@ -1,7 +1,7 @@
 // Service Worker — Affittacamere Ancona Centro · Guida Ospiti V5.1
 // Ottimizzato per GitHub Pages con immagini locali in /img
 
-let CACHE_NAME = 'ancona-guida-v5.1-1400';
+let CACHE_NAME = 'ancona-guida-v5.1-1401';
 let TILES_CACHE_NAME = CACHE_NAME + '-tiles';
 const MAX_TILES = 200;
 
