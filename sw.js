@@ -1,7 +1,7 @@
-// Service Worker — Affittacamere Ancona Centro · Guida Ospiti V5.0
+// Service Worker — Affittacamere Ancona Centro · Guida Ospiti V5.1
 // Ottimizzato per GitHub Pages con immagini locali in /img
 
-let CACHE_NAME = 'ancona-guida-v5.0-1000';
+let CACHE_NAME = 'ancona-guida-v5.1-1400';
 let TILES_CACHE_NAME = CACHE_NAME + '-tiles';
 const MAX_TILES = 200;
 
@@ -10,7 +10,6 @@ const ASSETS_TO_CACHE = [
     './index.html',
     './app.js',
     './manifest.json',
-    // Immagini locali — precachate per offline completo
     './img/home.jpg',
     './img/host.jpg',
     './img/icon-192.png',
@@ -48,7 +47,6 @@ const ASSETS_TO_CACHE = [
     './img/rist-marcello.jpg',
     './img/rist-domus.jpg',
     './img/rist-filotea.jpg',
-    // Leaflet (CDN, ma cacheato per offline)
     'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
     'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js',
 ];
@@ -105,7 +103,6 @@ self.addEventListener('fetch', (event) => {
     if (url.hostname.includes('google-analytics.com') ||
         url.hostname.includes('facebook.com/tr')) return;
 
-    // HTML: Network-First
     if (url.pathname.endsWith('/') || url.pathname.endsWith('.html') || url.pathname === './') {
         event.respondWith(
             fetch(event.request).then((networkResponse) => {
@@ -121,7 +118,6 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // JS e CSS: Stale-while-revalidate (ottimale per GitHub)
     if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
         event.respondWith(
             caches.match(event.request).then((cached) => {
@@ -138,7 +134,6 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Immagini locali: Cache-First (offline garantito)
     if (url.pathname.startsWith('/img/') || url.pathname.startsWith('./img/')) {
         event.respondWith(
             caches.match(event.request).then((cachedResponse) => {
@@ -155,7 +150,6 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // OSM Tiles
     if (url.hostname.includes('tile.openstreetmap.org')) {
         event.respondWith(
             caches.match(event.request).then((cachedResponse) => {
@@ -173,7 +167,6 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
-    // Fallback generico
     event.respondWith(
         fetch(event.request)
             .then((response) => {
