@@ -1,1692 +1,763 @@
+const APP_CACHE_NAME = 'ancona-guida-v5.1-1400';
+const PHOTO_BASE = './img/';
+const HOST_PHONE = '3356750269';
+const HOST_EMAIL = 'anconacentro@yahoo.com';
+const ANCONA_LAT = 43.6158;
+const ANCONA_LON = 13.5189;
+const NO_GPS_SECTIONS = ['apartment','contact','services','gastronomy'];
+const WMO_CODE_MAP = {
+    0:{icon:'☀️',desc:'Sereno'},1:{icon:'🌤️',desc:'Poco nuvoloso'},2:{icon:'⛅',desc:'Nuvoloso'},
+    3:{icon:'☁️',desc:'Coperto'},45:{icon:'🌫️',desc:'Nebbia'},48:{icon:'🌫️',desc:'Nebbia'},
+    51:{icon:'🌦️',desc:'Pioggerella'},53:{icon:'🌧️',desc:'Pioggia'},55:{icon:'🌧️',desc:'Pioggia'},
+    61:{icon:'🌧️',desc:'Pioggia'},63:{icon:'🌧️',desc:'Pioggia'},65:{icon:'🌧️',desc:'Pioggia'},
+    71:{icon:'🌨️',desc:'Neve'},73:{icon:'🌨️',desc:'Neve'},75:{icon:'🌨️',desc:'Neve'},
+    80:{icon:'🌦️',desc:'Rovesci'},81:{icon:'🌧️',desc:'Rovesci'},82:{icon:'🌧️',desc:'Rovesci'},
+    95:{icon:'⛈️',desc:'Temporale'},96:{icon:'⛈️',desc:'Temporale'},99:{icon:'⛈️',desc:'Temporale'}
+};
 
-    const NO_GPS_SECTIONS = ['apartment', 'contact', 'services', 'gastronomy'];
-    const HOST_PHONE = '3356750269';
-    const HOST_EMAIL = 'anconacentro@yahoo.com';
-    const PHOTO_BASE = './img/';
-    // Unica fonte di verità per la versione cache.
-    // Aggiornare solo questo valore ad ogni release — il SW lo riceve via postMessage,
-    // non serve più modificare sw.js ad ogni versione.
-    const APP_CACHE_NAME = 'ancona-guida-v5.0-1000';
-    const HOME_COORDS = { lat: 43.6181895, lng: 13.5129489 };
-    const headerSubTr = { it: 'Guida Ospiti · Piazza Roma 3', en: 'Guest Guide · Piazza Roma 3', de: 'Gästeführer · Piazza Roma 3', pl: 'Przewodnik dla gości · Piazza Roma 3' };
-    const ANCONA_LAT = 43.6181895, ANCONA_LNG = 13.5129489;
-    let distSortActive = false;
-    let homeStaticMap = null;
-    let _countdownInterval = null; // FIX #5 V5.0 27/06/26: refresh countdown ogni minuto
-    // FIX #A V5.0 27/06/26: dirty flag per evitare re-render identici in renderAll
-    let _rf_lang = null, _rf_section = null, _rf_sub = null, _rf_detail = null, _rf_distSort = null;
+const sections = [
+    { id:'mustsee',     icon:'🚶', it:'Centro Storico',        en:'Historic Centre',       de:'Historisches Zentrum', pl:'Centrum historyczne' },
+    { id:'passetto',    icon:'🌊', it:'Il Passetto',            en:'The Passetto',          de:'Der Passetto',         pl:'Passetto' },
+    { id:'cardeto',     icon:'🌳', it:'Cardeto e Cittadella',   en:'Cardeto & Cittadella',  de:'Cardeto & Zitadelle',  pl:'Cardeto i Cytadela' },
+    { id:'porto',       icon:'⚓', it:'Il Porto',               en:'The Port',              de:'Der Hafen',            pl:'Port' },
+    { id:'beaches',     icon:'🏖️', it:'Spiagge e Conero',       en:'Beaches & Conero',      de:'Strände & Conero',     pl:'Plaże i Conero' },
+    { id:'borghi',      icon:'🏘️', it:'Borghi e Dintorni',      en:'Villages & Surroundings',de:'Dörfer & Umgebung',   pl:'Wioski i okolice' },
+    { id:'gastronomy',  icon:'🍽️', it:'Gastronomia',            en:'Gastronomy',            de:'Gastronomie',          pl:'Gastronomia' },
+    { id:'practical',   icon:'🎒', it:'Info Utili',             en:'Useful Info',           de:'Nützliche Infos',      pl:'Przydatne informacje' },
+    { id:'contact',     icon:'📞', it:'Contatti',               en:'Contacts',              de:'Kontakte',             pl:'Kontakty' },
+    { id:'services',    icon:'🏪', it:'Servizi',                en:'Services',              de:'Dienstleistungen',     pl:'Usługi' },
+    { id:'apartment',   icon:'🏠', it:'L\'Appartamento',        en:'The Apartment',         de:'Die Wohnung',          pl:'Apartament' },
+    { id:'rules',       icon:'📋', it:'Regole',                 en:'Rules',                 de:'Regeln',               pl:'Zasady' },
+    { id:'phrases',     icon:'💬', it:'Frasi Utili',            en:'Useful Phrases',        de:'Nützliche Sätze',      pl:'Przydatne zwroty' },
+    { id:'cultura2028', icon:'🎭', it:'Cultura 2028',           en:'Cultura 2028',          de:'Cultura 2028',         pl:'Cultura 2028' }
+];
 
-    // === FULLSCREEN MAP VARIABLES ===
-    let fullscreenMapInstance = null;
-    let isFullscreenOpening = false; // Item 10: guard anti-double-open
-    let fsStoredPlaces = [];
-    let fsIsHome = false;
-    let fsSubItineraryId = null;
-    let fsListenersInitialized = false;
-    let _fsCloseHandler = null; // FIX #4 V5.0 27/06/26: handler persistente per evitare accumulo listener
-
-    // Item 1 V5.0: debounce utility – previene chiamate ravvicinate (es. resize)
-    function debounce(fn, delay) { let timer; return function(...args) { clearTimeout(timer); timer = setTimeout(() => fn.apply(this, args), delay); }; }
-
-    const appData = {
-
-        mustsee: [
-            { order:1, name:'Fontana del Calamo (Le 13 Cannelle)', emoji:'⛲', photo:'fontana-calamo.jpg',
-              it:'Conosciuta dagli anconetani come la Fontana delle 13 Cannelle, è uno dei simboli più autentici della città e il punto ideale da cui iniziare la scoperta del centro storico. L\'attuale aspetto rinascimentale risale alla metà del Cinquecento, ma la sorgente era già utilizzata nei secoli precedenti per rifornire d\'acqua abitanti e marinai.',
-              en:'Known to Ancona residents as the Fountain of the 13 Spouts, one of the city\'s most authentic symbols and the ideal starting point for exploring the historic centre. Its Renaissance appearance dates from the mid-16th century, though the spring was already used in earlier centuries.',
-              de:'Als Brunnen der 13 Wasserspeier bekannt, eines der authentischsten Symbole der Stadt und idealer Ausgangspunkt.',
-              pl:'Znana jako Fontanna 13 Dysz, jeden z najbardziej autentycznych symboli miasta.',
-              itLong:'<p>La fontana fu costruita nel 1560 su progetto di Pellegrino Tibaldi. Le tredici maschere in bronzo rappresentavano le contrade cittadine che contribuivano alla manutenzione dell\'acquedotto. I marinai bevevano da queste cannelle prima di partire per lunghi viaggi.</p><p><b>Curiosità:</b> Di fronte, una targa ricorda l\'antica Porta del Calamo, demolita nel 1860 per l\'espansione urbana dopo l\'Unità d\'Italia.</p>',
-              enLong:'<p>Built in 1560 to a design by Pellegrino Tibaldi. The thirteen bronze masks represented the city districts contributing to aqueduct maintenance. Sailors drank from these spouts before long voyages.</p><p><b>Curiosity:</b> The plaque opposite commemorates the ancient Porta del Calamo, demolished in 1860.</p>',
-              deLong:'<p>1560 von Pellegrino Tibaldi erbaut. Die 13 Bronzemasken repräsentierten Stadtbezirke.</p><p><b>Wissenswertes:</b> Tafel erinnert an Porta del Calamo, 1860 abgerissen.</p>',
-              plLong:'<p>Zbudowana w 1560 roku przez Pellegrino Tibaldiego. 13 masek reprezentowało dzielnice miejskie.</p><p><b>Ciekawostka:</b> Tablica upamiętnia Porta del Calamo, zburzoną w 1860 roku.</p>',
-              itNote:'Cercate le differenze tra le tredici maschere: nessuna è uguale all\'altra.',
-              enNote:'Look for the differences between the thirteen masks: no two are the same.',
-              deNote:'Suchen Sie Unterschiede: Keine Maske gleicht der anderen.',
-              plNote:'Szukajcie różnic: żadna maska nie jest taka sama.',
-              itPhoto:'Frontalmente con luce mattutina che illumina i bronzi.',
-              enPhoto:'Head-on with morning light on the bronzes.',
-              dePhoto:'Frontal im Morgenlicht auf den Bronzen.',
-              plPhoto:'Czołowo z porannym światłem na brązach.',
-              itTime:'5–10 minuti.',enTime:'5–10 minutes.',deTime:'5–10 Minuten.',plTime:'5–10 minut.',
-              itNext:'Percorrete Corso Mazzini fino al Teatro delle Muse.',
-              enNext:'Walk along Corso Mazzini to the Teatro delle Muse.',
-              deNext:'Den Corso Mazzini zum Teatro delle Muse.',
-              plNext:'Idźcie Corso Mazzini do Teatro delle Muse.',
-              dist:'📍 Punto di partenza', mapQuery:'Fontana del Calamo Ancona', lat:43.6196574, lng:13.5122620 },
-
-            { order:2, name:'Teatro delle Muse', emoji:'🎭', photo:'teatro-muse.jpg',
-              it:'Il principale teatro delle Marche e il cuore della vita culturale di Ancona. Inaugurato nel 1827 in stile neoclassico, è uno dei luoghi più importanti della città per concerti, opere liriche, spettacoli di prosa e danza. Gravemente danneggiato dai bombardamenti della Seconda guerra mondiale, rimase chiuso per decenni prima di essere completamente restaurato e restituito alla città nel 2002.',
-              en:'The principal theatre of the Marche and the heart of Ancona\'s cultural life. Inaugurated in 1827 in neoclassical style, one of the city\'s most important venues for concerts, opera, drama and dance. Severely damaged in the Second World War, it remained closed for decades before being fully restored in 2002.',
-              de:'Das wichtigste Theater der Marken, 1827 eingeweiht. Nach schwerer Kriegsbeschädigung 2002 restauriert.',
-              pl:'Główny teatr Marchii, zainaugurowany w 1827 roku. Po uszkodzeniu wojennymi, odrestaurowany w 2002.',
-              itLong:'<p>Progettato dall\'ingegnere Pietro Ghinelli, la facciata in pietra d\'Istria con il pronao ionico si ispira ai templi greci. La sala principale ospita oltre 900 spettatori ed è tra le migliori acusticamente dell\'Italia centrale.</p><p><b>Curiosità:</b> Il nome "Muse" evoca le nove muse della mitologia greca, patronesse delle arti. La riapertura nel 2002 fu vissuta come una vera rinascita culturale.</p>',
-              enLong:'<p>Designed by Pietro Ghinelli, the Istrian stone façade with Ionic portico is inspired by Greek temples. The main auditorium seats over 900 and is among the finest acoustically in central Italy.</p><p><b>Curiosity:</b> The name "Muse" evokes the nine muses of Greek mythology. The 2002 reopening was a true cultural renaissance.</p>',
-              deLong:'<p>Von Pietro Ghinelli entworfen, von griechischen Tempeln inspiriert. Über 900 Sitzplätze, hervorragende Akustik.</p>',
-              plLong:'<p>Zaprojektowany przez Pietro Ghinelliego, inspirowany świątyniami greckimi. Ponad 900 miejsc, doskonała akustyka.</p>',
-              itNote:'Il pronao con le sei colonne ioniche: trovate l\'angolazione che mostra le colonne in prospettiva.',
-              enNote:'The Ionic portico: find the angle showing the columns in perspective.',
-              deNote:'Das ionische Portikus: Finden Sie den Perspektivwinkel.',
-              plNote:'Portyk joński: znajdźcie kąt perspektywiczny.',
-              itPhoto:'Dal lato della piazza al tramonto, quando la luce esalta la pietra d\'Istria.',
-              enPhoto:'From the square at sunset, when the light enhances the Istrian stone.',
-              dePhoto:'Vom Platz bei Sonnenuntergang.',
-              plPhoto:'Z placu o zachodzie słońca.',
-              itTime:'10 min (esterno). 2 ore con spettacolo.',enTime:'10 min (exterior). 2h with show.',deTime:'10 Min. (Außen). 2 Std. mit Vorstellung.',plTime:'10 min (zewnątrz). 2 godz. ze spektaklem.',
-              itNext:'Imboccate Via della Loggia verso la Loggia dei Mercanti.',
-              enNext:'Take Via della Loggia to the Loggia dei Mercanti.',
-              deNext:'Via della Loggia zur Loggia dei Mercanti.',
-              plNext:'Via della Loggia do Loggia dei Mercanti.',
-              dist:'🚶 350 m – 5 min', mapQuery:'Teatro delle Muse Ancona', lat:43.6183717, lng:13.5103285 },
-
-            { order:3, name:'Loggia dei Mercanti', emoji:'🏛️', photo:'loggia-mercanti.jpg',
-              it:'Uno dei più raffinati esempi di architettura gotico-rinascimentale di Ancona. Costruita nel Quattrocento su progetto di Giorgio da Sebenico, era il luogo dove i mercanti provenienti da tutto il Mediterraneo concludevano affari e commerci. La ricca facciata in pietra racconta l\'importanza economica di Ancona come Repubblica Marinara.',
-              en:'One of the finest examples of Gothic-Renaissance architecture in Ancona. Built in the 15th century to a design by Giorgio da Sebenico, it was where merchants from across the Mediterranean concluded deals. The richly decorated façade tells of Ancona\'s importance as a Maritime Republic.',
-              de:'Eines der feinsten Beispiele gotisch-Renaissance-Architektur, im 15. Jahrhundert erbaut.',
-              pl:'Jeden z najpiękniejszych przykładów architektury gotycko-renesansowej, zbudowany w XV wieku.',
-              itLong:'<p>Costruita tra il 1451 e il 1459, quando Ancona era al culmine della sua potenza commerciale. La facciata è un capolavoro di intaglio: decorazioni con santi, animali fantastici e scene allegoriche.</p><p><b>Curiosità:</b> Era anche il luogo dove venivano resi pubblici i bandi. La voce del banditore raggiungeva tutta la piazza.</p>',
-              enLong:'<p>Built between 1451 and 1459, at the peak of Ancona\'s commercial power. The façade is a masterpiece with saints, fantastic animals and allegorical scenes.</p><p><b>Curiosity:</b> It was also where proclamations were publicly announced.</p>',
-              deLong:'<p>1451–1459 erbaut. Fassade mit Heiligen, Fantasietieren und allegorischen Szenen.</p>',
-              plLong:'<p>Zbudowana 1451–1459. Fasada ze świętymi, fantastycznymi zwierzętami i scenami alegorycznymi.</p>',
-              itNote:'Cercate i tre leoni rampanti: sono il simbolo araldico di Ancona.',
-              enNote:'Look for the three rampant lions: Ancona\'s heraldic symbol.',
-              deNote:'Die drei Löwen: das Wappensymbol Anconas.',
-              plNote:'Trzy lwy wspinające: herbowy symbol Ankony.',
-              itPhoto:'Frontalmente con luce mattutina sui bassorilievi.',
-              enPhoto:'Head-on with morning light on the bas-reliefs.',
-              dePhoto:'Frontal im Morgenlicht.',
-              plPhoto:'Czołowo z porannym światłem.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Proseguite fino alla Chiesa di Santa Maria della Piazza.',
-              enNext:'Continue to the Church of Santa Maria della Piazza.',
-              deNext:'Weiter zur Kirche Santa Maria della Piazza.',
-              plNext:'Do Kościoła Santa Maria della Piazza.',
-              dist:'🚶 50 m – 1 min', mapQuery:'Loggia dei Mercanti Ancona', lat:43.6185540, lng:13.5107413 },
-
-            { order:4, name:'Chiesa di Santa Maria della Piazza', emoji:'⛪', photo:'santa-maria-piazza.jpg',
-              it:'Uno dei più preziosi esempi di architettura romanica delle Marche. Edificata tra l\'XI e il XII secolo sui resti di una basilica paleocristiana del IV secolo, testimonia oltre millecinquecento anni di storia e di fede. La sua elegante facciata in pietra bianca del Conero è un capolavoro del romanico adriatico. All\'interno, un pavimento in vetro permette di osservare i mosaici paleocristiani sottostanti.',
-              en:'One of the most precious examples of Romanesque architecture in the Marche. Built between the 11th and 12th centuries over a 4th-century Early Christian basilica. Its elegant white Conero stone façade is a masterpiece of Adriatic Romanesque. Inside, a glass floor reveals the Early Christian mosaics below.',
-              de:'Wertvolles romanisches Beispiel aus dem 11.–12. Jahrhundert. Glasboden zeigt frühchristliche Mosaiken.',
-              pl:'Cenny przykład romanizmu z XI–XII wieku. Szklana podłoga odsłania wczesnochrześcijańskie mozaiki.',
-              itLong:'<p>La facciata con archetti ciechi rivela l\'influenza di maestranze adriatiche. Di fronte si apre la Portella Santa Maria, l\'antico passaggio dal centro al porto: per secoli mercanti, pellegrini e marinai hanno attraversato questo varco.</p><p><b>Curiosità:</b> I mosaici del IV secolo sotto il pavimento sono tra i pochissimi esempi conservati nelle Marche.</p>',
-              enLong:'<p>The façade with blind arcades reveals Adriatic craftsmen\'s influence. Opposite opens the Portella Santa Maria, the ancient passage from centre to port.</p><p><b>Curiosity:</b> The 4th-century mosaics under the floor are among the very few preserved examples in the Marche.</p>',
-              deLong:'<p>Die Fassade zeigt adriatischen Einfluss. Portella Santa Maria verband Zentrum und Hafen.</p>',
-              plLong:'<p>Fasada ujawnia wpływy adriatyckie. Portella Santa Maria łączyła centrum z portem.</p>',
-              itNote:'Il pavimento vetrato vicino all\'altare: un dettaglio che quasi tutti mancano.',
-              enNote:'The glass floor near the altar: a detail almost all visitors miss.',
-              deNote:'Der Glasboden beim Altar: fast alle übersehen ihn.',
-              plNote:'Szklana podłoga przy ołtarzu: prawie wszyscy ją przeoczają.',
-              itPhoto:'La facciata in controluce nella luce mattutina.',
-              enPhoto:'The façade against the morning light.',
-              dePhoto:'Die Fassade im Gegenlicht.',
-              plPhoto:'Fasada pod światło rano.',
-              itTime:'15–20 minuti.',enTime:'15–20 minutes.',deTime:'15–20 Minuten.',plTime:'15–20 minut.',
-              itNext:'Proseguite verso il porto fino all\'Arco di Traiano.',
-              enNext:'Continue towards the port to the Arch of Trajan.',
-              deNext:'Weiter zum Hafen bis zum Trajansbogen.',
-              plNext:'Do Łuku Trajana przy porcie.',
-              dist:'🚶 100 m – 2 min', mapQuery:'Santa Maria della Piazza Ancona', lat:43.6186839, lng:13.5109397 },
-
-            { order:5, name:'Arco di Traiano', emoji:'🏛️', photo:'arco-traiano.jpg',
-              it:'Il monumento romano più celebre di Ancona e uno dei meglio conservati dell\'intero Adriatico. Eretto nel 115 d.C. in onore dell\'imperatore Traiano, che finanziò personalmente l\'ampliamento del porto. Realizzato in candido marmo greco dell\'isola di Paro, colpisce per l\'eleganza delle proporzioni e la posizione spettacolare affacciata sul mare.',
-              en:'The most celebrated Roman monument in Ancona, one of the best preserved on the entire Adriatic. Erected in 115 AD in honour of Emperor Trajan, who personally financed the port expansion. Built in white Greek marble from the island of Paros, it impresses with its elegant proportions and spectacular seafront position.',
-              de:'Bekanntestes römisches Monument Anconas, 115 n. Chr. Weißer parischer Marmor, direkt am Meer.',
-              pl:'Najsłynniejszy zabytek rzymski Ankony, 115 r. n.e. Biały marmur z wyspy Paros, nad morzem.',
-              itLong:'<p>Alto quasi 14 metri, era decorato da statue in bronzo dorato di Traiano, della moglie Plotina e della sorella Marciana, oggi perdute. La posizione non fu scelta per ragioni estetiche ma funzionali: era il primo monumento visibile entrando nel porto.</p><p><b>Curiosità:</b> Uno dei rarissimi archi onorari romani quasi intatti, sopravvissuto a terremoti, saccheggi e bombardamenti della Seconda guerra mondiale.</p>',
-              enLong:'<p>Almost 14 metres tall, originally decorated with gilded bronze statues now lost. Its position was functional: the first monument visible entering the port.</p><p><b>Curiosity:</b> One of the very few Roman arches surviving almost intact, through earthquakes, pillaging and WWII bombing.</p>',
-              deLong:'<p>Fast 14 Meter hoch, ursprünglich mit Bronzestatuen. Funktionale Position als erstes Monument beim Einfahren.</p>',
-              plLong:'<p>Prawie 14 metrów. Pierwotnie z brązowymi posągami. Pozycja funkcjonalna.</p>',
-              itNote:'Pur piccolo rispetto ad altri archi romani, è tra i più armoniosi dell\'Impero.',
-              enNote:'Despite being small, it is considered one of the most harmonious arches in the Empire.',
-              deNote:'Trotz geringer Größe einer der harmonischsten Bögen des Reiches.',
-              plNote:'Mimo małych rozmiarów jeden z najbardziej harmonijnych łuków Imperium.',
-              itPhoto:'Dal molo con il Duomo sul Colle Guasco alle spalle dell\'arco.',
-              enPhoto:'From the jetty with the Cathedral on Guasco hill behind the arch.',
-              dePhoto:'Vom Kai mit Dom hinter dem Bogen.',
-              plPhoto:'Z mola z Katedrą za łukiem.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Pochi passi e raggiungete l\'Arco Clementino.',
-              enNext:'A few steps to the Arch of Clement.',
-              deNext:'Wenige Schritte zum Clementinischen Bogen.',
-              plNext:'Kilka kroków do Łuku Klemensa.',
-              dist:'🚶 300 m – 4 min', mapQuery:'Arco di Traiano Ancona', lat:43.6198437, lng:13.5075702 },
-
-            { order:6, name:'Arco Clementino', emoji:'🏛️', photo:'arco-clementino.jpg',
-              it:'Il passaggio tra la città romana e quella settecentesca. Progettato da Luigi Vanvitelli, fu dedicato a Papa Clemente XII che concesse ad Ancona il prestigioso status di Porto Franco, favorendo un periodo di grande prosperità. Costruito in pietra d\'Istria, presenta le linee sobrie ed eleganti tipiche dell\'architettura vanvitelliana.',
-              en:'The passage between Roman Ancona and the 18th-century city. Designed by Luigi Vanvitelli, dedicated to Pope Clement XII who granted Ancona Free Port status. Built in Istrian stone with the sober, elegant lines typical of Vanvitellian architecture.',
-              de:'Übergang zwischen römischem und barockem Ancona. Von Vanvitelli, Papst Klemens XII. gewidmet.',
-              pl:'Przejście między Ankoną rzymską i barokową. Projekt Vanvitelliego, poświęcony papieżowi Klemensowi XII.',
-              itLong:'<p>Costruito tra il 1733 e il 1738. Il Porto Franco del 1732 esentava le merci da dazi, richiamando mercanti da tutta Europa.</p><p>Passeggiando tra i due archi si abbracciano quasi duemila anni di storia portuale: dal porto imperiale romano al rilancio commerciale del Settecento.</p>',
-              enLong:'<p>Built between 1733 and 1738. The 1732 Free Port exempted goods from duties, attracting merchants from across Europe.</p><p>Walking between the two arches spans almost two thousand years of port history.</p>',
-              deLong:'<p>1733–1738 erbaut. Freihafen 1732: Waren zollfrei, Kaufleute aus ganz Europa angezogen.</p>',
-              plLong:'<p>Zbudowany 1733–1738. Wolny Port 1732: towary bez ceł, kupcy z całej Europy.</p>',
-              itNote:'Confrontate i due archi: Traiano austero e imperiale, Clementino elegante e commerciale.',
-              enNote:'Compare the two arches: Trajan\'s austere and imperial, Clement\'s elegant and commercial.',
-              deNote:'Zwei Bögen vergleichen: Trajans streng, Klements elegant.',
-              plNote:'Porównajcie łuki: Trajana surowy, Klemensa elegancki.',
-              itTime:'10 minuti.',enTime:'10 minutes.',deTime:'10 Minuten.',plTime:'10 minut.',
-              itNext:'Proseguite verso i resti del Porto Romano.',
-              enNext:'Continue to the remains of the Roman Port.',
-              deNext:'Zu den römischen Hafenresten.',
-              plNext:'Do pozostałości Portu Rzymskiego.',
-              dist:'🚶 50 m – 1 min', mapQuery:'Arco Clementino Ancona', lat:43.6198924, lng:13.5085052 },
-
-            { order:'6b', name:'Lanterna Rossa', emoji:'🔴', photo:'lanterna-rossa.jpg',
-              it:'Una deviazione breve ma altamente consigliata. Attraversando il varco nelle mura si raggiunge la Torre dei Piloti; poco oltre, un passaggio quasi nascosto conduce al lungo molo con il faro rosso, punto di riferimento per le imbarcazioni da oltre un secolo. Luogo autentico e rilassato, ancora poco frequentato dal turismo di massa.',
-              en:'A short but highly recommended detour. Through the gap in the walls you reach the Pilots\' Tower; just beyond, an almost hidden passage leads to the long jetty with the red lighthouse, a reference point for vessels for over a century.',
-              de:'Kurzer, empfehlenswerter Umweg zum roten Leuchtturm.',
-              pl:'Krótkie, polecane odejście do czerwonej latarni.',
-              itNote:'Salite sul molo: il Duomo da un lato, porto e Adriatico dall\'altro. Uno dei panorami più spettacolari di Ancona.',
-              enNote:'Climb the jetty: the Cathedral on one side, port and Adriatic on the other. One of Ancona\'s most spectacular views.',
-              deNote:'Auf den Kai: Dom auf einer Seite, Hafen und Adria auf der anderen.',
-              plNote:'Na molo: Katedra po jednej stronie, port i Adriatyk po drugiej.',
-              itPhoto:'Dal molo con il faro rosso in primo piano e il profilo della città sullo sfondo.',
-              enPhoto:'From the jetty with the red lighthouse in front and the city skyline behind.',
-              dePhoto:'Vom Kai mit rotem Leuchtturm im Vordergrund.',
-              plPhoto:'Z mola z czerwoną latarnią.',
-              itTime:'20–30 minuti.',enTime:'20–30 minutes.',deTime:'20–30 Minuten.',plTime:'20–30 minut.',
-              itNext:'Tornate verso i resti del Porto Romano.',
-              enNext:'Return to the Roman Port remains.',
-              deNext:'Zurück zu den Hafenresten.',
-              plNext:'Wróćcie do pozostałości portu.',
-              dist:'🚶 200 m – 3 min', mapQuery:'Lanterna Rossa Ancona', lat:43.6208093, lng:13.5041601 },
-
-            { order:7, name:'Resti del Porto Romano', emoji:'⚓', photo:'porto-romano.jpg',
-              it:'Percorrendo il lungomare si incontrano i suggestivi resti dell\'antico Porto Romano, testimonianza dell\'importanza strategica di Ancona oltre duemila anni fa. La passerella consente di osservare le strutture dell\'epoca imperiale, quando qui attraccavano navi da Grecia, Asia Minore e dai principali scali del Mediterraneo.',
-              en:'Walking along the seafront you encounter the evocative remains of the ancient Roman Port. The walkway allows you to look down on the imperial-age structures, when ships from Greece, Asia Minor and all main Mediterranean ports docked here.',
-              de:'Überreste des alten Römischen Hafens entlang der Promenade.',
-              pl:'Pozostałości starożytnego portu rzymskiego wzdłuż promenady.',
-              itNote:'La tecnica costruttiva romana: blocchi uniti senza malta, solo con perni metallici. Resistono da duemila anni.',
-              enNote:'Roman construction: blocks joined without mortar, only with metal pins. Holding for two thousand years.',
-              deNote:'Römische Technik: Blöcke ohne Mörtel, nur mit Metallstiften.',
-              plNote:'Technika rzymska: bloki bez zaprawy, tylko metalowymi bolcami.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Proseguite verso il Palazzo degli Anziani.',
-              enNext:'Continue to the Palazzo degli Anziani.',
-              deNext:'Zum Palazzo degli Anziani.',
-              plNext:'Do Palazzo degli Anziani.',
-              dist:'🚶 300 m – 4 min', mapQuery:'Porto Romano Ancona', lat:43.6213099, lng:13.5094100 },
-
-            { order:8, name:'Palazzo degli Anziani', emoji:'🏛️', photo:'palazzo-anziani.jpg',
-              it:'Uno dei luoghi più rappresentativi della storia civile di Ancona. Da oltre otto secoli domina il porto dall\'alto del colle e continua ad ospitare il Consiglio Comunale. Qui si riuniva il Consiglio degli Anziani, l\'organo che governava la Repubblica di Ancona. Sul lato sinistro l\'ascensore pubblico conduce a Piazza Stracca con vista panoramica sui tetti del centro storico.',
-              en:'One of the most representative places of Ancona\'s civic history. For over eight centuries it has dominated the port from the hilltop and still houses the City Council. Here the Council of Elders governed the Republic of Ancona. On the left, the public lift leads to Piazza Stracca with panoramic views.',
-              de:'Seit über acht Jahrhunderten Sitz der Stadtverwaltung. Aufzug links zur Piazza Stracca mit Panoramablick.',
-              pl:'Od ponad ośmiu wieków siedziba władz miasta. Winda po lewej na Piazza Stracca z panoramą.',
-              itLong:'<p>Costruito nel 1270 da Margaritone d\'Arezzo, rinnovato nel Cinquecento da Pellegrino Tibaldi. Per secoli le decisioni su commerci, alleanze e difesa venivano prese qui.</p><p>La storia si intreccia con la Repubblica di Ancona, stato sovrano dal 1138 al 1532.</p>',
-              enLong:'<p>Built in 1270 by Margaritone of Arezzo, renovated in the 16th century by Tibaldi. For centuries decisions on commerce, alliances and defence were made here.</p><p>Its history is intertwined with the Republic of Ancona, sovereign state from 1138 to 1532.</p>',
-              deLong:'<p>1270 von Margaritone erbaut, im 16. Jh. renoviert. Verknüpft mit der Republik Ancona (1138–1532).</p>',
-              plLong:'<p>Zbudowany w 1270 roku. Powiązany z Republiką Ankony (1138–1532).</p>',
-              itNote:'L\'ascensore pubblico: panorama gratuito sui tetti del centro storico e bagni pubblici.',
-              enNote:'The public lift: free panoramic view over the rooftops and public toilets.',
-              deNote:'Öffentlicher Aufzug: kostenloser Panoramablick und öffentliche Toiletten.',
-              plNote:'Publiczna winda: bezpłatny widok panoramiczny i toalety.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Salite via Via Pizzecolli verso il Museo Archeologico.',
-              enNext:'Head up Via Pizzecolli to the Archaeological Museum.',
-              deNext:'Via Pizzecolli zum Museum.',
-              plNext:'Via Pizzecolli do Muzeum Archeologicznego.',
-              dist:'🚶 350 m – 5 min', mapQuery:'Palazzo degli Anziani Ancona', lat:43.6218462, lng:13.5111459 },
-
-            { order:9, name:'Museo Archeologico Nazionale', emoji:'🏺', photo:'museo-archeologico.jpg',
-              it:'Ospitato nel Palazzo Ferretti, custodisce una delle collezioni più importanti dell\'Italia centrale. Le sale affrescate da Pellegrino Tibaldi fanno da cornice a un viaggio attraverso migliaia di anni: dai primi insediamenti preistorici fino all\'età romana. Celebri i ricchi corredi funerari dei Piceni, l\'antico popolo che abitava queste terre prima della conquista romana.',
-              en:'Housed in Palazzo Ferretti, it holds one of the most important collections in central Italy. Rooms frescoed by Pellegrino Tibaldi frame a journey through millennia. Celebrated are the rich funerary goods of the Piceni, the ancient people who inhabited these lands before the Roman conquest.',
-              de:'Im Palazzo Ferretti, eine der wichtigsten Sammlungen Mittelitaliens. Räume mit Fresken von Tibaldi.',
-              pl:'W Palazzo Ferretti, jedna z najważniejszych kolekcji środkowych Włoch.',
-              itNote:'I corredi funerari piceni al piano superiore: l\'oreficeria è di qualità eccezionale.',
-              enNote:'The Picene funerary goods on the upper floor: goldwork of exceptional quality.',
-              deNote:'Picenische Grabbeigaben im Obergeschoss: außergewöhnliches Goldschmiedewerk.',
-              plNote:'Wyposażenie grobowe Picenów: złotnictwo wyjątkowej jakości.',
-              itPhoto:'La facciata di Palazzo Ferretti: uno degli angoli rinascimentali più eleganti.',
-              enPhoto:'The Palazzo Ferretti façade: one of the most elegant Renaissance corners.',
-              dePhoto:'Palazzo-Ferretti-Fassade: eleganteste Renaissanceecke.',
-              plPhoto:'Fasada Palazzo Ferretti: najelegantszy zakątek renesansowy.',
-              itTime:'1–2 ore.',enTime:'1–2 hours.',deTime:'1–2 Stunden.',plTime:'1–2 godziny.',
-              itNext:'Proseguite verso la scalinata della Cattedrale di San Ciriaco.',
-              enNext:'Continue to the staircase of the Cathedral of San Ciriaco.',
-              deNext:'Zur Domtreppe.',
-              plNext:'Do schodów Katedry San Ciriaco.',
-              dist:'🚶 150 m – 2 min', mapQuery:'Museo Archeologico Nazionale Marche Ancona', lat:43.6223819, lng:13.5116477 },
-
-            { order:10, name:'Cattedrale di San Ciriaco', emoji:'⛪', photo:'duomo-san-ciriaco.jpg',
-              it:'Il simbolo assoluto di Ancona. Sorge sulla sommità del Colle Guasco in una posizione straordinaria che domina porto, centro storico e costa adriatica. Prima della cattedrale qui sorgeva un tempio dedicato a Venere Euplea, protettrice dei marinai. La chiesa colpisce per la fusione unica di elementi romanici, bizantini e gotici. All\'esterno, uno dei panorami più spettacolari delle Marche.',
-              en:'The absolute symbol of Ancona. It stands on the summit of the Guasco Hill dominating the port, historic centre and Adriatic coast. Before the cathedral, a temple to Venus Euplea stood here. The church impresses with its unique fusion of Romanesque, Byzantine and Gothic. Outside, one of the most spectacular views in the Marche.',
-              de:'Das Symbol Anconas auf dem Guasco-Hügel. Einzigartige Mischung aus romanischen, byzantinischen und gotischen Elementen.',
-              pl:'Symbol Ankony na wzgórzu Guasco. Unikalne połączenie romańskiego, bizantyjskiego i gotyku.',
-              itLong:'<p>Prima della cattedrale qui sorgeva un tempio a Venere Euplea. Nel VI secolo una basilica paleocristiana; nell\'anno 1000 divenne cattedrale con le reliquie di San Ciriaco.</p><p>La pianta a croce greca tradisce l\'influenza dell\'architettura cristiana orientale, testimonianza dei legami storici di Ancona con Costantinopoli.</p><p><b>Curiosità:</b> San Ciriaco è il patrono di Ancona; la sua festività, il 4 maggio, è ancora importante per la città.</p>',
-              enLong:'<p>Before the cathedral, a temple to Venus Euplea. In the 6th century an Early Christian basilica; in 1000 it became a cathedral. The Greek cross plan reveals Eastern Christian influence.</p><p><b>Curiosity:</b> Saint Cyriacus\'s feast day, 4 May, is still important for Ancona.</p>',
-              deLong:'<p>Vor der Kathedrale ein Tempel der Venus Euplea. Der griechische Kreuzgrundriss zeigt östlichen Einfluss.</p>',
-              plLong:'<p>Przed katedrą świątynia Wenus Euplea. Grecki plan krzyżowy ujawnia wschodni wpływ.</p>',
-              itNote:'Uscite sul lato orientale: la vista sul porto e sul mare è tra le più belle dell\'Adriatico.',
-              enNote:'Exit on the eastern side: the view over the port and sea is among the finest on the Adriatic.',
-              deNote:'Ostseite: Blick über Hafen und Meer, einer der schönsten der Adria.',
-              plNote:'Wschodnia strona: widok na port i morze należy do najpiękniejszych.',
-              itPhoto:'Dal belvedere orientale con la cupola in primo piano e il porto sotto.',
-              enPhoto:'From the eastern belvedere with the dome in front and the port below.',
-              dePhoto:'Östlicher Aussichtspunkt mit Kuppel und Hafen.',
-              plPhoto:'Wschodni belweder z kopułą i portem.',
-              itTime:'20–30 minuti.',enTime:'20–30 minutes.',deTime:'20–30 Minuten.',plTime:'20–30 minut.',
-              itNext:'Scendete verso l\'Anfiteatro Romano.',
-              enNext:'Head down to the Roman Amphitheatre.',
-              deNext:'Zum Römischen Amphitheater.',
-              plNext:'Do Amfiteatru Rzymskiego.',
-              dist:'🚶 400 m – 6 min', mapQuery:'Cattedrale San Ciriaco Ancona', lat:43.6232468, lng:13.5133090 },
-
-            { order:11, name:'Anfiteatro Romano', emoji:'🏟️', photo:'anfiteatro-romano.jpg',
-              it:'Pochi visitatori immaginano che sotto le strade del centro storico si nasconda uno dei più importanti siti archeologici della città. L\'Anfiteatro Romano, costruito tra il I e il II secolo d.C., poteva ospitare migliaia di spettatori. Gli scavi hanno riportato alla luce parte delle gradinate e delle strutture originarie.',
-              en:'Few visitors imagine that beneath the streets of the historic centre lies one of the city\'s most important archaeological sites. The Roman Amphitheatre, built in the 1st–2nd centuries AD, could hold thousands of spectators. Excavations have uncovered part of the original tiers and structures.',
-              de:'Unter den Straßen verbirgt sich das Römische Amphitheater aus dem 1.–2. Jh. n. Chr.',
-              pl:'Pod ulicami kryje się Amfiteatr Rzymski z I–II wieku n.e.',
-              itNote:'Immaginatevi le gradinate piene: l\'acustica era progettata per portare la voce fino all\'ultimo posto.',
-              enNote:'Imagine the tiers full: acoustics were designed to carry voices to the last seat.',
-              deNote:'Volle Ränge vorstellen: Akustik für Stimmen bis zum letzten Platz.',
-              plNote:'Wyobraźcie pełne trybuny: akustyka przenosiła głos do ostatniego miejsca.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Proseguite verso Piazza del Plebiscito.',
-              enNext:'Continue to Piazza del Plebiscito.',
-              deNext:'Zur Piazza del Plebiscito.',
-              plNext:'Do Piazza del Plebiscito.',
-              dist:'🚶 200 m – 3 min', mapQuery:'Anfiteatro Romano Ancona', lat:43.6235050, lng:13.5124980 },
-
-            { order:12, name:'Piazza del Plebiscito (Piazza del Papa)', emoji:'🗿', photo:'piazza-plebiscito.jpg',
-              it:'Conosciuta come Piazza del Papa, è uno degli angoli più eleganti e vivaci del centro storico. Il nome deriva dalla monumentale statua di Papa Clemente XII, che concesse ad Ancona il Porto Franco. Circondata da palazzi storici, caffè e ristoranti, è da sempre un luogo d\'incontro dove la vita cittadina scorre tra tavolini all\'aperto ed eventi culturali.',
-              en:'Known as Piazza del Papa, one of the most elegant and lively corners of the historic centre. The name comes from the statue of Pope Clement XII, who granted Ancona its Free Port. Surrounded by historic buildings, cafés and restaurants, always a meeting place.',
-              de:'Als Piazza del Papa bekannt. Statue von Papst Klemens XII., der den Freihafen gewährte.',
-              pl:'Znana jako Piazza del Papa. Posąg papieża Klemensa XII, który nadał Wolny Port.',
-              itNote:'Il braccio teso della statua punta verso il porto: quasi a benedire i commerci della città.',
-              enNote:'The outstretched arm points towards the port: as if blessing the city\'s commerce.',
-              deNote:'Ausgestreckter Arm zeigt zum Hafen: als segne er den Handel.',
-              plNote:'Wyciągnięte ramię wskazuje na port: jakby błogosławiło handel.',
-              itPhoto:'Dal lato di Corso Garibaldi con la statua e il Palazzo del Governo.',
-              enPhoto:'From the Corso Garibaldi side with the statue and Palazzo del Governo.',
-              dePhoto:'Vom Corso Garibaldi mit Statue und Palazzo del Governo.',
-              plPhoto:'Od Corso Garibaldi z posągiem.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Raggiungete Corso Garibaldi, il salotto della città.',
-              enNext:'Head to Corso Garibaldi, the city\'s drawing room.',
-              deNext:'Zum Corso Garibaldi, dem Stadtsalon.',
-              plNext:'Na Corso Garibaldi, salon miasta.',
-              dist:'🚶 300 m – 4 min', mapQuery:'Piazza del Plebiscito Ancona', lat:43.6210882, lng:13.5118780 },
-
-            { order:13, name:'Corso Garibaldi', emoji:'🚶', photo:'',
-              it:'Il salotto di Ancona. Questa ampia strada pedonale collega il centro storico a Piazza Cavour ed è percorsa ogni giorno da residenti, studenti e visitatori. Tra eleganti palazzi ottocenteschi si incontrano boutique, librerie, negozi storici, caffetterie e gelaterie. Il luogo ideale per osservare il ritmo autentico della città.',
-              en:'The drawing room of Ancona. This wide pedestrian street connects the historic centre to Piazza Cavour. Between elegant 19th-century buildings: boutiques, bookshops, historic shops, cafés and ice cream parlours. The ideal place to observe the authentic rhythm of the city.',
-              de:'Der Salon von Ancona. Breite Fußgängerzone mit eleganten Palazzi, Boutiquen und Cafés.',
-              pl:'Salon Ankony. Szeroka ulica piesza z eleganckimi budynkami i kawiarniami.',
-              itNote:'Bar Torino al n. 66, aperto dal 1921: l\'aperitivo serale sul marciapiede è un rito irrinunciabile.',
-              enNote:'Bar Torino at no. 66, open since 1921: the evening aperitif on the pavement is an unmissable ritual.',
-              deNote:'Bar Torino Nr. 66, seit 1921: Aperitif auf dem Bürgersteig.',
-              plNote:'Bar Torino nr 66, od 1921: aperitif na chodniku.',
-              itTime:'15–20 minuti di passeggiata.',enTime:'15–20 min walking.',deTime:'15–20 Min. Spaziergang.',plTime:'15–20 min spaceru.',
-              itNext:'Raggiungete Piazza Cavour.',enNext:'Reach Piazza Cavour.',deNext:'Zur Piazza Cavour.',plNext:'Do Piazza Cavour.',
-              dist:'🚶 300 m – 4 min', mapQuery:'Corso Garibaldi Ancona', lat:43.6185, lng:13.5130 },
-
-            { order:14, name:'Piazza Cavour', emoji:'🌳', photo:'',
-              it:'Il principale spazio monumentale della città moderna. Ampia, elegante e ricca di aree verdi, collega naturalmente il centro storico al quartiere del Passetto. Al centro il monumento a Camillo Benso Conte di Cavour, circondato da giardini curati che nelle belle giornate diventano punto di ritrovo.',
-              en:'The main monumental space of the modern city. Wide, elegant and rich in green areas, it naturally connects the historic centre to the Passetto district. At the centre stands the monument to Count Cavour, surrounded by well-tended gardens.',
-              de:'Wichtigster Monumentalplatz der modernen Stadt. Grünflächen, Cavour-Denkmal.',
-              pl:'Główna przestrzeń monumentalna nowoczesnego miasta. Tereny zielone, pomnik Cavoura.',
-              itNote:'Le prospettive alberate creano corridoi visivi unici: fermatevi al centro.',
-              enNote:'Tree-lined perspectives create unique visual corridors: stop at the centre.',
-              deNote:'Baumalleen: einzigartige Sichtkorridore.',
-              plNote:'Aleje drzew: unikalne korytarze widokowe.',
-              itTime:'10 minuti.',enTime:'10 minutes.',deTime:'10 Minuten.',plTime:'10 minut.',
-              itNext:'Imboccate Viale della Vittoria verso il Passetto.',
-              enNext:'Head along Viale della Vittoria towards the Passetto.',
-              deNext:'Viale della Vittoria zum Passetto.',
-              plNext:'Viale della Vittoria do Passetto.',
-              dist:'🚶 550 m – 7 min', mapQuery:'Piazza Cavour Ancona', lat:43.6162, lng:13.5191 },
-
-            { order:15, name:'Viale della Vittoria', emoji:'🌲', photo:'',
-              it:'Uno dei percorsi più piacevoli di Ancona. Il lungo viale alberato collega Piazza Cavour al Passetto ed è considerato dagli anconetani una delle passeggiate più belle della città. Eleganti edifici storici, giardini e filari di pini creano un ambiente tranquillo e ombreggiato, mentre l\'aria marina si fa più intensa avvicinandosi alla costa.',
-              en:'One of Ancona\'s most pleasant routes. The long tree-lined avenue connects Piazza Cavour to the Passetto, considered one of the city\'s finest walks. Elegant historic buildings, gardens and rows of pines create a quiet, shaded environment as the sea air grows more intense.',
-              de:'Einer der angenehmsten Wege. Baumgesäumte Allee mit historischen Gebäuden.',
-              pl:'Jedna z najpiękniejszych tras. Aleja obsadzona drzewami z historycznymi budynkami.',
-              itNote:'Lungo il viale caffè e gelaterie storiche: una sosta è d\'obbligo prima del mare.',
-              enNote:'Historic cafés and ice cream parlours along the way: a stop is a must before the sea.',
-              deNote:'Historische Cafés und Eisdielen: Halt vor dem Meer.',
-              plNote:'Historyczne kawiarnie i lodziarnie: przystanek przed morzem.',
-              itTime:'15 minuti di passeggiata.',enTime:'15 min walking.',deTime:'15 Min. Spaziergang.',plTime:'15 min spaceru.',
-              itNext:'Arrivate al Passetto per il panorama sull\'Adriatico.',
-              enNext:'Arrive at the Passetto for the Adriatic view.',
-              deNext:'Zum Passetto für den Adriablick.',
-              plNext:'Do Passetto z widokiem na Adriatyk.',
-              dist:'🚶 1350 m – 18 min', mapQuery:'Viale della Vittoria Ancona', lat:43.6155, lng:13.5260 }
-        ],
-
-        passetto: [
-            { name:'Monumento ai Caduti', emoji:'🏛️', photo:'passetto.jpg',
-              it:'Il Monumento ai Caduti, inaugurato nel 1930 su progetto di Guido Cirilli, è uno dei simboli architettonici più riconoscibili di Ancona. Le maestose colonne in pietra bianca affacciate sul mare creano un\'imponente quinta monumentale sulla falesia del Passetto. La grande terrazza panoramica offre una vista straordinaria sulla costa del Monte Conero e sull\'Adriatico.',
-              en:'The Monument to the Fallen, inaugurated in 1930 to a design by Guido Cirilli, is one of Ancona\'s most recognisable architectural landmarks. Its majestic white stone columns facing the sea create an imposing backdrop on the Passetto cliff. The large panoramic terrace offers an extraordinary view of the Monte Conero coast and the Adriatic.',
-              de:'Das Kriegerdenkmal von 1930, Entwurf Guido Cirilli. Majestätische weiße Säulen an der Klippe.',
-              pl:'Pomnik Poległych z 1930 roku, projekt Guido Cirillego. Majestatyczne białe kolumny nad klifem.',
-              itNote:'All\'alba e al tramonto il panorama assume colori particolarmente suggestivi.',
-              enNote:'At dawn and sunset the panorama takes on particularly evocative colours.',
-              deNote:'Bei Sonnenauf- und -untergang besonders stimmungsvolle Farben.',
-              plNote:'O świcie i zachodzie słońca szczególnie sugestywne kolory.',
-              itPhoto:'Dal belvedere con le colonne in primo piano e il Monte Conero sullo sfondo.',
-              enPhoto:'From the belvedere with the columns in front and Monte Conero behind.',
-              dePhoto:'Vom Belvedere mit Säulen und Conero.',
-              plPhoto:'Z belwederu z kolumnami i Conero.',
-              itTime:'10–15 minuti.',enTime:'10–15 minutes.',deTime:'10–15 Minuten.',plTime:'10–15 minut.',
-              itNext:'Scendete la scalinata verso le Grotte del Passetto.',
-              enNext:'Descend the staircase to the Grotte del Passetto.',
-              deNext:'Treppe hinunter zu den Grotten.',
-              plNext:'Schodami do Grotte del Passetto.',
-              dist:'🚶 2150 m – 29 min', mapQuery:'Monumento ai Caduti Passetto Ancona', lat:43.6150, lng:13.5340 },
-            { name:'Grotte del Passetto', emoji:'🕳️', photo:'',
-              it:'Uno dei luoghi più iconici di Ancona. Scavate nella roccia calcarea della falesia dalla fine dell\'Ottocento come ricovero per le imbarcazioni dei pescatori, sono ancora oggi utilizzate da molte famiglie anconetane che custodiscono una tradizione tramandata di generazione in generazione. Ogni grotta è diversa: porte colorate, dettagli personalizzati e piccoli moli raccontano il legame profondo della città con il mare.',
-              en:'One of Ancona\'s most iconic places. Carved into the limestone cliff from the late 19th century as shelters for fishermen\'s boats, still used today by many Ancona families preserving a tradition handed down through generations. Each grotto is different: coloured doors, personalised details and small jetties tell of the city\'s deep bond with the sea.',
-              de:'Ikonischer Ort. Ende des 19. Jh. in den Kalkstein gehauen. Noch heute von Fischerfamilien genutzt.',
-              pl:'Ikoniczne miejsce. Groty wykute od końca XIX wieku, nadal używane przez rodziny rybackie.',
-              itLong:'<p>Le grotte non furono scavate in una volta sola: ogni famiglia le ha personalizzate nel tempo con porte, pavimenti, arredi e impianti elettrici. Oggi sono tramandate come patrimonio di famiglia.</p><p><b>Curiosità:</b> Nelle giornate di mare calmo l\'acqua assume sfumature turchesi e smeraldo difficili da trovare altrove sull\'Adriatico.</p>',
-              enLong:'<p>The grottoes were not carved all at once: each family personalised theirs over time. Today they are passed down as family heritage.</p><p><b>Curiosity:</b> On calm days the water takes on turquoise and emerald hues hard to find elsewhere on the Adriatic.</p>',
-              deLong:'<p>Jede Familie personalisierte ihre Grotte. Heute vererbt.</p><p><b>Wissenswertes:</b> Türkise und smaragdgrüne Farbtöne an ruhigen Tagen.</p>',
-              plLong:'<p>Każda rodzina spersonalizowała swoją grotę. Dziś przekazywane w rodzinie.</p><p><b>Ciekawostka:</b> Turkusowe i szmaragdowe odcienie w spokojne dni.</p>',
-              itNote:'Cercate la grotta con la porta azzurra: una delle più fotografate.',
-              enNote:'Look for the grotto with the blue door: one of the most photographed.',
-              deNote:'Die Grotte mit der blauen Tür suchen.',
-              plNote:'Szukajcie groty z niebieskimi drzwiami.',
-              itPhoto:'Dal molo inferiore con le grotte e la falesia sullo sfondo.',
-              enPhoto:'From the lower jetty with the grottoes and cliff behind.',
-              dePhoto:'Vom unteren Steg mit Grotten und Klippe.',
-              plPhoto:'Z dolnego mola z grotami i klifem.',
-              itTime:'15–20 minuti.',enTime:'15–20 minutes.',deTime:'15–20 Minuten.',plTime:'15–20 minut.',
-              itNext:'Godetevi il mare e la falesia.',
-              enNext:'Enjoy the sea and the cliff.',
-              deNext:'Meer und Klippe genießen.',
-              plNext:'Delektujcie się morzem i klifem.',
-              dist:'🚶 2200 m – 30 min', mapQuery:'Grotte del Passetto Ancona', lat:43.6148, lng:13.5345 },
-            { name:'Spiaggia del Passetto', emoji:'🌊', photo:'passetto.jpg',
-              it:'Ai piedi della falesia, la Spiaggia del Passetto è uno dei luoghi di mare più amati dagli anconetani. A differenza delle spiagge sabbiose dell\'Adriatico, il paesaggio è caratterizzato da grandi scogli bianchi levigati dal mare, acqua limpida e una spettacolare parete rocciosa. Ideale per nuoto e snorkeling. Si consigliano scarpe da scoglio.',
-              en:'At the foot of the cliff, the Spiaggia del Passetto is one of Ancona\'s most loved seaside spots. Unlike sandy Adriatic beaches, the landscape features large white rocks smoothed by the sea, clear water and a spectacular rocky wall. Ideal for swimming and snorkelling. Water shoes recommended.',
-              de:'Am Fuße der Klippe. Weiße Felsen, klares Wasser. Badeschuhe empfohlen.',
-              pl:'U podnóża klifu. Białe skały, czysta woda. Buty do pływania zalecane.',
-              itNote:'Arrivate la mattina presto per l\'acqua più calma e la spiaggia meno affollata.',
-              enNote:'Arrive early morning for the calmest water and fewest people.',
-              deNote:'Früh morgens für das ruhigste Wasser.',
-              plNote:'Wczesnym rankiem dla spokojniejszej wody.',
-              itPhoto:'Dagli scogli al tramonto con la falesia illuminata.',
-              enPhoto:'From the rocks at sunset with the illuminated cliff.',
-              dePhoto:'Von den Felsen bei Sonnenuntergang.',
-              plPhoto:'Ze skał o zachodzie słońca.',
-              itTime:'30 minuti – mezza giornata.',enTime:'30 min – half a day.',deTime:'30 Min. – halber Tag.',plTime:'30 min – pół dnia.',
-              dist:'🚶 2200 m – 30 min', mapQuery:'Spiaggia del Passetto Ancona', lat:43.6148, lng:13.5345 }
-        ],
-
-        cardeto: [
-            { name:'Parco del Cardeto', emoji:'🌳', photo:'',
-              it:'Il più grande parco urbano di Ancona. Qui convivono natura, storia, archeologia e panorami spettacolari. Esteso su oltre trentacinque ettari affacciati sul mare, occupa due colli da cui si godono viste straordinarie sul porto, il centro storico, il Monte Conero e l\'intera costa adriatica. Molti anconetani lo considerano il punto più bello della città per osservare il tramonto.',
-              en:'Ancona\'s largest urban park. Nature, history, archaeology and spectacular views coexist over more than thirty-five hectares. Two hills offer extraordinary views of the port, the historic centre, Monte Conero and the entire Adriatic coast.',
-              de:'Anconas größter Stadtpark auf über 35 Hektar. Zwei Hügel mit außergewöhnlichem Panorama.',
-              pl:'Największy park miejski Ankony na ponad 35 hektarach. Dwa wzgórza z niezwykłą panoramą.',
-              itNote:'Molti anconetani lo considerano il punto più bello per il tramonto.',
-              enNote:'Many Ancona residents consider it the finest spot for sunsets.',
-              deNote:'Viele halten es für den schönsten Sonnenuntergangsort.',
-              plNote:'Wielu mieszkańców uważa to za najpiękniejsze miejsce na zachód słońca.',
-              itPhoto:'Dal belvedere verso il porto con la Mole Vanvitelliana e il Duomo sullo sfondo.',
-              enPhoto:'From the belvedere towards the port with the Mole and Cathedral behind.',
-              dePhoto:'Vom Aussichtspunkt zum Hafen mit Mole und Dom.',
-              plPhoto:'Z belwederu w kierunku portu.',
-              itTime:'1–3 ore.',enTime:'1–3 hours.',deTime:'1–3 Stunden.',plTime:'1–3 godziny.',
-              dist:'🚶 900 m – 12 min', mapQuery:'Parco del Cardeto Ancona', lat:43.6244, lng:13.5118 },
-            { name:'Faro Vecchio', emoji:'🔦', photo:'',
-              it:'Nel cuore del Parco del Cardeto sorge il Faro Vecchio, costruito nel 1860 dopo l\'Unità d\'Italia. Per oltre un secolo ha guidato le navi in ingresso nel porto. Sebbene oggi non sia più operativo, da qui lo sguardo abbraccia il porto, il centro storico, il Duomo, il Monte Conero e, nelle giornate più limpide, gran parte della costa marchigiana.',
-              en:'In the heart of the Parco del Cardeto stands the Old Lighthouse, built in 1860. For over a century it guided ships into the port. Though no longer operational, from here you can see the port, the historic centre, the Cathedral, Monte Conero and, on the clearest days, much of the Marche coast.',
-              de:'Alter Leuchtturm von 1860, außergewöhnlicher Ausblick auf Hafen und Küste.',
-              pl:'Stara Latarnia z 1860 roku, niezwykły widok na port i wybrzeże.',
-              itNote:'Un luogo in cui vale la pena fermarsi, lasciandosi accompagnare dal vento e dal rumore del mare.',
-              enNote:'A place worth stopping at, letting yourself be accompanied by the wind and sound of the sea.',
-              deNote:'Hier lohnt es sich innezuhalten.',
-              plNote:'Warto się tu zatrzymać.',
-              itPhoto:'Con il faro in primo piano e il porto sullo sfondo al tramonto.',
-              enPhoto:'With the lighthouse in front and port behind at sunset.',
-              dePhoto:'Mit Leuchtturm und Hafen bei Sonnenuntergang.',
-              plPhoto:'Z latarnią i portem o zachodzie słońca.',
-              itTime:'15–20 minuti.',enTime:'15–20 minutes.',deTime:'15–20 Minuten.',plTime:'15–20 minut.',
-              dist:'🚶 1100 m – 15 min', mapQuery:'Faro Vecchio Cardeto Ancona', lat:43.6255, lng:13.5095 },
-            { name:'Cimitero Ebraico', emoji:'✡️', photo:'',
-              it:'All\'interno del Parco del Cardeto, il Cimitero Ebraico è un luogo di straordinario valore storico e culturale, tra i più importanti e meglio conservati d\'Europa. Le sepolture più antiche risalgono al XVI secolo e raccontano la lunga presenza della comunità ebraica ad Ancona, porto aperto per secoli ai commerci con il Mediterraneo orientale.',
-              en:'Within the Parco del Cardeto, the Jewish Cemetery is a place of extraordinary historical and cultural value, among the most important and best preserved in Europe. The oldest burials date to the 16th century, testifying to the long presence of the Jewish community in Ancona.',
-              de:'Jüdischer Friedhof im Park, einer der bedeutendsten Europas. Älteste Gräber aus dem 16. Jahrhundert.',
-              pl:'Cmentarz Żydowski w parku, jeden z najważniejszych w Europie. Najstarsze groby z XVI wieku.',
-              itNote:'Le iscrizioni in ebraico e latino testimoniano la ricchezza culturale di una comunità fondamentale per la storia di Ancona.',
-              enNote:'Inscriptions in Hebrew and Latin bear witness to the cultural richness of a community fundamental to Ancona\'s history.',
-              deNote:'Inschriften auf Hebräisch und Latein zeugen von kulturellem Reichtum.',
-              plNote:'Inskrypcje po hebrajsku i łacinie świadczą o bogactwie kulturowym.',
-              itTime:'20–30 minuti.',enTime:'20–30 minutes.',deTime:'20–30 Minuten.',plTime:'20–30 minut.',
-              dist:'🚶 1000 m – 13 min', mapQuery:'Cimitero Ebraico Ancona', lat:43.6248, lng:13.5103 },
-            { name:'Fortezza della Cittadella', emoji:'🏰', photo:'cittadella.jpg',
-              it:'Il Parco della Cittadella conserva una delle opere di architettura militare rinascimentale più importanti dell\'Italia centrale. La fortezza fu progettata nel 1532 da Antonio da Sangallo il Giovane per volontà di Papa Clemente VII. La caratteristica pianta a cinque bastioni è uno dei migliori esempi dell\'ingegneria militare del Cinquecento. Dai punti panoramici il panorama spazia dal porto al centro storico fino alle colline marchigiane.',
-              en:'The Parco della Cittadella preserves one of the most important examples of Renaissance military architecture in central Italy. The fortress was designed in 1532 by Antonio da Sangallo the Younger. Its five-bastion plan is one of the finest examples of 16th-century military engineering.',
-              de:'Renaissancefestung von 1532, von Sangallo dem Jüngeren. Fünf-Bastionen-Grundriss.',
-              pl:'Renesansowa twierdza z 1532 roku, projekt Sangallo Młodszego. Plan pięciu bastionów.',
-              itNote:'Dal punto panoramico: dal porto al centro storico fino alle colline marchigiane.',
-              enNote:'From the viewpoint: from the port to the historic centre and the Marche hills.',
-              deNote:'Vom Aussichtspunkt: Hafen bis zu den Hügeln.',
-              plNote:'Z punktu widokowego: od portu do wzgórz.',
-              itPhoto:'Dai bastioni con il porto e il Duomo in lontananza.',
-              enPhoto:'From the bastions with the port and Cathedral in the distance.',
-              dePhoto:'Von den Bastionen mit Hafen und Dom.',
-              plPhoto:'Z bastionów z portem i Katedrą.',
-              itTime:'30–45 minuti.',enTime:'30–45 minutes.',deTime:'30–45 Minuten.',plTime:'30–45 minut.',
-              dist:'🚶 800 m – 11 min', mapQuery:'Fortezza della Cittadella Ancona', lat:43.6138415, lng:13.5080277 }
-        ],
-
-        porto: [
-            { name:'Porto Antico', emoji:'⚓', photo:'',
-              it:'Il porto di Ancona è uno dei più grandi del Mediterraneo e il cuore pulsante della città. A differenza di molti porti storici trasformati in aree turistiche, quello di Ancona conserva una straordinaria vitalità: navi commerciali, traghetti per Grecia, Croazia e Albania, pescherecci e imbarcazioni da diporto convivono ogni giorno. Questa continuità tra storia e presente rende Ancona diversa da molte altre città marinare italiane.',
-              en:'Ancona\'s port is one of the largest in the Mediterranean and the beating heart of the city. Unlike many historic ports transformed into tourist areas, Ancona\'s preserves extraordinary vitality: cargo ships, ferries to Greece, Croatia and Albania, fishing boats and pleasure craft coexist daily.',
-              de:'Einer der größten Häfen des Mittelmeers, voller Vitalität: Fähren, Fischerboote, Freizeitboote.',
-              pl:'Jeden z największych portów Śródziemnomorza, pełen żywotności: promy, kutry, łodzie rekreacyjne.',
-              itNote:'Osservate le navi traghetto: alcune superano i 200 metri di lunghezza.',
-              enNote:'Notice the ferries: some exceed 200 metres in length.',
-              deNote:'Fähren beobachten: Einige überschreiten 200 Meter.',
-              plNote:'Promy: niektóre przekraczają 200 metrów.',
-              itPhoto:'Dal lungomare Vanvitelli con le navi in primo piano e il Duomo sul Colle Guasco.',
-              enPhoto:'From Lungomare Vanvitelli with ships in front and the Cathedral on Guasco hill.',
-              dePhoto:'Lungomare Vanvitelli mit Schiffen und Dom.',
-              plPhoto:'Lungomare Vanvitelli ze statkami i Katedrą.',
-              itTime:'20–30 minuti.',enTime:'20–30 minutes.',deTime:'20–30 Minuten.',plTime:'20–30 minut.',
-              dist:'🚶 700 m – 10 min', mapQuery:'Porto di Ancona', lat:43.6235, lng:13.5090 },
-            { name:'Mole Vanvitelliana (Lazzaretto)', emoji:'🏛️', photo:'mole-vanvitelliana.jpg',
-              it:'Uno degli edifici più affascinanti di Ancona. Progettata da Luigi Vanvitelli nel Settecento, sorge su un\'isola artificiale pentagonale collegata alla terraferma da ponti. Nata come lazzaretto per la quarantena di merci e persone dal Mediterraneo, è oggi un polo culturale con mostre, concerti e festival. La sera, riflessa nelle acque del porto, offre uno degli scorci più suggestivi della città.',
-              en:'One of Ancona\'s most fascinating buildings. Designed by Luigi Vanvitelli in the 18th century on a pentagonal artificial island. Originally a lazaretto for Mediterranean quarantine, now a cultural hub with exhibitions, concerts and festivals. In the evening, reflected in the port waters, it offers one of the city\'s most evocative views.',
-              de:'Von Vanvitelli auf fünfeckiger Insel. Ehemaliges Lazarett, heute Kulturzentrum.',
-              pl:'Projekt Vanvitelliego na pięciokątnej wyspie. Dawny lazaret, dziś centrum kulturalne.',
-              itLong:'<p>Progettata tra il 1733 e il 1743. La planimetria pentagonale rispondeva a esigenze sanitarie: ogni lato era destinato a una categoria diversa di merci o passeggeri. Al centro una chiesa per i quarantenati.</p><p><b>Da non perdere:</b> Il Museo Tattile Statale Omero, unico in Italia, permette di toccare le opere d\'arte.</p>',
-              enLong:'<p>Designed between 1733 and 1743. The pentagonal plan met sanitary requirements: each side allocated to different goods or passengers. At the centre, a church for those in quarantine.</p><p><b>Not to miss:</b> The Museo Tattile Statale Omero, unique in Italy, allows you to touch artworks.</p>',
-              deLong:'<p>1733–1743 entworfen. Pentagonaler Grundriss für Quarantänezwecke.</p><p><b>Nicht verpassen:</b> Museo Tattile Statale Omero.</p>',
-              plLong:'<p>Zaprojektowana 1733–1743. Pięciokątny plan do celów kwarantanny.</p><p><b>Nie przegap:</b> Museo Tattile Statale Omero.</p>',
-              itNote:'La planimetria pentagonale è visibile dall\'alto: cercate una foto aerea.',
-              enNote:'The pentagonal plan is visible from above: look for an aerial photo.',
-              deNote:'Der fünfeckige Grundriss von oben sichtbar.',
-              plNote:'Pięciokątny rzut widoczny z góry.',
-              itPhoto:'Dal lungomare al tramonto con la Mole illuminata riflessa nell\'acqua.',
-              enPhoto:'From the seafront at sunset with the illuminated Mole reflected in the water.',
-              dePhoto:'Von der Promenade bei Sonnenuntergang.',
-              plPhoto:'Z promenady o zachodzie słońca.',
-              itTime:'20–30 min (esterno). 1 ora con Museo Tattile.',
-              enTime:'20–30 min (exterior). 1h with Museo Tattile.',
-              deTime:'20–30 Min. (außen). 1 Std. mit Museum.',
-              plTime:'20–30 min (zewnątrz). 1 godz. z muzeum.',
-              dist:'🚶 1100 m – 14 min', mapQuery:'Mole Vanvitelliana Ancona', lat:43.6143735, lng:13.504058,
-              extraMap:{ label:'🖐️ Museo Tattile Omero', query:'Museo Tattile Statale Omero Ancona' } }
-        ],
-
-        beaches: [
-            { name:'Spiaggia del Passetto', emoji:'🌊', photo:'passetto.jpg',
-              it:'Scogli bianchi e acqua limpida con le celebri grotte scavate nella falesia. Il mare di Ancona, raggiungibile a piedi.',
-              en:'White rocks and clear water with the famous grottoes carved into the cliff. Ancona\'s sea, reachable on foot.',
-              de:'Weiße Felsen und klares Wasser mit den berühmten Grotten. Zu Fuß erreichbar.',
-              pl:'Białe skały i czysta woda z grotami. Dostępna pieszo.',
-              dist:'🚶 2150 m – 29 min', mapQuery:'Spiaggia del Passetto Ancona', lat:43.616139, lng:13.533622 },
-            { name:'Palombina', emoji:'🏖️', photo:'',
-              it:'Lunga spiaggia di sabbia finissima, fondali bassi, ideale per famiglie. Con bus A, B e C da piazza Roma. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Orari Conerobus ↗</a>',
-              en:'Long fine-sand beach, shallow waters, ideal for families. Buses A, B and C from Piazza Roma. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Conerobus ↗</a>',
-              de:'Feinsandiger Strand, flaches Wasser. Bus A, B, C ab Piazza Roma.',
-              pl:'Drobnopiaszczysta plaża, płytka woda. Autobusy A, B, C z Piazza Roma.',
-              dist:'🚗 4 km – 8 min', mapQuery:'Spiaggia di Palombina Ancona', lat:43.6166715, lng:13.4299650 },
-            { name:'Mezzavalle', emoji:'🏝️', photo:'',
-              it:'Una delle spiagge più spettacolari delle Marche. Priva di stabilimenti balneari, acque limpide e falesie bianche. Raggiungibile a piedi dal belvedere di Portonovo (30 min) o con bus 94 da piazza Cavour. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Orari Conerobus ↗</a>',
-              en:'One of the most spectacular beaches in the Marche. No beach establishments, clear waters and white cliffs. Reachable on foot from Portonovo belvedere (30 min) or bus 94 from Piazza Cavour. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Conerobus ↗</a>',
-              de:'Einer der spektakulärsten Strände. Bus 94 + 30 Min. zu Fuß.',
-              pl:'Jedna z najpiękniejszych plaż. Bus 94 + 30 min pieszo.',
-              itNote:'Portate tutto il necessario: acqua, cibo, protezione solare. Non ci sono servizi.',
-              enNote:'Bring everything: water, food, sun protection. No services on the beach.',
-              deNote:'Alles mitnehmen: Wasser, Essen, Sonnenschutz.',
-              plNote:'Zabierzcie wszystko: wodę, jedzenie, krem.',
-              itPhoto:'Dal sentiero in discesa con spiaggia e falesie in vista.',
-              enPhoto:'From the path descending with beach and cliffs in view.',
-              dePhoto:'Vom Abstiegspfad mit Strand und Klippen.',
-              plPhoto:'Ze szlaku z widokiem plaży i klifów.',
-              dist:'🚌 Bus 94 + 🚶 30 min', mapQuery:'Spiaggia di Mezzavalle Ancona', lat:43.5671694, lng:13.5723437 },
-            { name:'Portonovo – Baia del Conero', emoji:'🏝️', photo:'portonovo.jpg',
-              it:'Incastonata tra il Monte Conero e il mare, Portonovo è una delle baie più affascinanti d\'Italia. Spiagge di ciottoli bianchi, acqua cristallina, ristoranti di pesce rinomati, la Chiesa romanica di Santa Maria e il Fortino Napoleonico. Con bus 94 da piazza Cavour. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Orari Conerobus ↗</a>',
-              en:'Nestled between Monte Conero and the sea, Portonovo is one of Italy\'s most enchanting bays. White pebble beaches, crystal-clear water, renowned fish restaurants, the Romanesque Church of Santa Maria and the Napoleonic Fort. Bus 94 from Piazza Cavour. <a href="https://www.conerobus.it/orari/" target="_blank" rel="noopener noreferrer">Conerobus ↗</a>',
-              de:'Zwischen Monte Conero und Meer. Weiße Kieselstrände, klares Wasser. Bus 94.',
-              pl:'Między Monte Conero a morzem. Białe plaże, krystalicznie czysta woda. Bus 94.',
-              itPhoto:'Dal Belvedere sopra la baia con il contrasto verde-azzurro.',
-              enPhoto:'From the Belvedere above the bay with the green-blue contrast.',
-              dePhoto:'Vom Belvedere über der Bucht.',
-              plPhoto:'Z Belvedere nad zatoką.',
-              dist:'🚌 12 km – 25 min', mapQuery:'Baia di Portonovo Ancona', lat:43.5636463, lng:13.5976903,
-              extraMap:{ label:'🎥 Webcam Spiaggia Bonetti', url:'https://vedetta.org/webcam/italia/marche/ancona/portonovo-spiaggia/' } },
-            { name:'Spiaggia delle Due Sorelle', emoji:'🏝️', photo:'',
-              it:'Una delle spiagge più belle d\'Italia. Selvaggia e incontaminata, raggiungibile solo via mare. Prende il nome dai due faraglioni bianchi che emergono dall\'acqua. Battelli da Numana o Portonovo.',
-              en:'One of the most beautiful beaches in Italy. Wild and unspoilt, reachable only by sea. Named after the two white sea stacks. Boats from Numana or Portonovo.',
-              de:'Einer der schönsten Strände Italiens, nur per Boot erreichbar.',
-              pl:'Jedna z najpiękniejszych plaż Włoch, dostępna tylko łodzią.',
-              itNote:'I due faraglioni: l\'immagine simbolo del Parco del Conero.',
-              enNote:'The two sea stacks: the iconic image of the Parco del Conero.',
-              deNote:'Die zwei Felsnadeln: das Wahrzeichen des Parco del Conero.',
-              plNote:'Dwa faragliony: symbol Parco del Conero.',
-              itPhoto:'Dalla barca durante l\'avvicinamento con i faraglioni in primo piano.',
-              enPhoto:'From the boat approaching with the sea stacks in front.',
-              dePhoto:'Vom Boot mit Felsnadeln.',
-              plPhoto:'Z łodzi z faraglionami.',
-              itTime:'Mezza giornata.',enTime:'Half a day.',deTime:'Halber Tag.',plTime:'Pół dnia.',
-              dist:'🚗 22 km + 🚢 barca da Numana', mapQuery:'Spiaggia delle Due Sorelle Conero', lat:43.4858, lng:13.6290 }
-        ],
-
-        borghi: [
-            { name:'Senigallia', emoji:'🏖️', photo:'',
-              it:'Cittadina balneare a 30 km a nord di Ancona, famosa per la Spiaggia di Velluto, sabbia finissima unica sull\'Adriatico. Centro storico con la Rocca Roveresca (XV sec.) e il porto canale. In estate ospita il Summer Jamboree, festival internazionale di musica e cultura anni \'40–\'50 tra i più grandi d\'Europa.',
-              en:'Seaside town 30 km north of Ancona, famous for the Velvet Beach, finest sand on the Adriatic. Historic centre with the 15th-century Rocca Roveresca. In summer the Summer Jamboree, one of Europe\'s largest 1940s–50s festivals.',
-              de:'Küstenstadt 30 km nördlich. Samtener Strand. Im Sommer das Summer Jamboree Festival.',
-              pl:'Nadmorskie miasto 30 km na północ. Aksamitna Plaża. Latem Summer Jamboree.',
-              itTime:'Mezza giornata – giornata intera.',enTime:'Half day – full day.',deTime:'Halber – ganzer Tag.',plTime:'Pół – cały dzień.',
-              dist:'🚗 30 km – 30 min', mapQuery:'Senigallia', lat:43.7163, lng:13.2088 },
-            { name:'Jesi', emoji:'🏛️', photo:'',
-              it:'Città medievale nell\'entroterra marchigiano, patria di Federico II di Svevia (1194) e del compositore Giovanni Battista Pergolesi. Le mura medievali sono tra le meglio conservate delle Marche. Rinomata per il Verdicchio dei Castelli di Jesi, uno dei bianchi più pregiati d\'Italia.',
-              en:'Medieval city in the Marche hinterland, birthplace of Frederick II of Swabia (1194) and composer Pergolesi. The medieval walls are among the best preserved in the Marche. Renowned for Verdicchio dei Castelli di Jesi white wine.',
-              de:'Mittelalterliche Stadt. Geburtsort Friedrichs II. und Pergolesies. Verdicchio-Wein.',
-              pl:'Średniowieczne miasto. Rodzinne Fryderyka II i Pergolesiego. Wino Verdicchio.',
-              itTime:'2–3 ore.',enTime:'2–3 hours.',deTime:'2–3 Stunden.',plTime:'2–3 godziny.',
-              dist:'🚗 30 km – 35 min', mapQuery:'Jesi AN', lat:43.52048, lng:13.23773 },
-            { name:'Sirolo', emoji:'🏘️', photo:'sirolo.jpg',
-              it:'Arroccato su un balcone naturale sul mare, Sirolo è uno dei borghi più belli delle Marche. Vicoli fioriti, piazze panoramiche e scorci sul Conero. La Piazza Vittorio Veneto offre una vista straordinaria sulla costa.',
-              en:'Perched on a natural balcony over the sea, Sirolo is one of the most beautiful villages in the Marche. Flower-lined alleys, panoramic squares. Piazza Vittorio Veneto offers an extraordinary coastal view.',
-              de:'Auf einem Balkon über dem Meer, eines der schönsten Dörfer der Marken.',
-              pl:'Na naturalnym balkonie nad morzem, jedna z najpiękniejszych wsi Marchii.',
-              itNote:'La terrazza di Piazza Vittorio Veneto: uno dei punti di vista più belli dell\'Adriatico.',
-              enNote:'The Piazza Vittorio Veneto terrace: one of the finest viewpoints on the Adriatic.',
-              deNote:'Terrasse der Piazza: einer der schönsten Adriaausblicke.',
-              plNote:'Taras Piazza: jeden z najpiękniejszych widoków Adriatyku.',
-              itPhoto:'Dal belvedere con il mare e le falesie sullo sfondo.',
-              enPhoto:'From the belvedere with sea and cliffs behind.',
-              dePhoto:'Vom Belvedere mit Meer und Klippen.',
-              plPhoto:'Z belwederu z morzem i klifami.',
-              itTime:'1–2 ore.',enTime:'1–2 hours.',deTime:'1–2 Stunden.',plTime:'1–2 godziny.',
-              dist:'🚗 22 km – 30 min', mapQuery:'Sirolo AN', lat:43.4887, lng:13.6126 },
-            { name:'Offagna', emoji:'🏰', photo:'offagna.jpg',
-              it:'Inserito tra i Borghi più belli d\'Italia, Offagna è dominato da una splendida rocca medievale. Ogni estate ospita celebri rievocazioni storiche che trasformano le sue strade in un autentico villaggio medievale.',
-              en:'Listed among Italy\'s most beautiful villages, Offagna is dominated by a splendid medieval fortress. Every summer famous historical re-enactments transform its streets into an authentic medieval village.',
-              de:'Eines der schönsten Dörfer Italiens. Mittelalterliche Festung. Sommer-Reenactments.',
-              pl:'Jedno z najpiękniejszych miasteczek Włoch. Twierdza. Letnie rekonstrukcje.',
-              itNote:'La vista dalla sommità della Rocca sulle colline marchigiane.',
-              enNote:'The view from the top of the Rocca over the Marche hills.',
-              deNote:'Ausblick von der Festungsspitze.',
-              plNote:'Widok ze szczytu Rocca.',
-              itTime:'1–2 ore.',enTime:'1–2 hours.',deTime:'1–2 Stunden.',plTime:'1–2 godziny.',
-              dist:'🚗 12 km – 18 min', mapQuery:'Offagna Ancona', lat:43.5274876, lng:13.4412360 },
-            { name:'Loreto', emoji:'⛪', photo:'loreto.jpg',
-              it:'Una delle principali mete di pellegrinaggio del mondo cattolico. La basilica custodisce la Santa Casa, secondo la tradizione la dimora della Madonna trasportata dalla Terra Santa. Raggiungibile in treno da Ancona in circa 20 minuti.',
-              en:'One of the main pilgrimage destinations in the Catholic world. The basilica houses the Holy House, traditionally the home of the Madonna transported from the Holy Land. Reachable by train from Ancona in about 20 minutes.',
-              de:'Wichtigstes Pilgerziel. Per Zug in ca. 20 Min. von Ancona.',
-              pl:'Główne miejsce pielgrzymkowe. Pociągiem ok. 20 minut z Ankony.',
-              itNote:'Il rivestimento marmoreo della Santa Casa, opera di Bramante e dei principali artisti del Rinascimento.',
-              enNote:'The marble casing of the Holy House, by Bramante and leading Renaissance artists.',
-              deNote:'Marmorverkleidung von Bramante.',
-              plNote:'Marmurowa okładzina dzieła Bramantego.',
-              itTime:'1–3 ore.',enTime:'1–3 hours.',deTime:'1–3 Stunden.',plTime:'1–3 godziny.',
-              dist:'🚗 21 km – 32 min', mapQuery:'Loreto AN', lat:43.4411021, lng:13.6094860 },
-            { name:'Recanati', emoji:'📖', photo:'recanati.jpg',
-              it:'Città natale di Giacomo Leopardi (1798), uno dei più grandi poeti italiani. Letteratura, arte e paesaggi si fondono in un borgo rimasto quasi intatto. Il Colle dell\'Infinito al tramonto è un\'esperienza imperdibile.',
-              en:'Birthplace of Giacomo Leopardi (1798), one of Italy\'s greatest poets. Literature, art and landscapes blend in a largely intact village. The Colle dell\'Infinito at sunset is unmissable.',
-              de:'Geburtsort Leopardis (1798). Der Colle dell\'Infinito bei Sonnenuntergang unvergesslich.',
-              pl:'Miasto rodzinne Leopardiego (1798). Colle dell\'Infinito o zachodzie słońca niezapomniane.',
-              itNote:'Il Colle dell\'Infinito al tramonto: uno dei luoghi più poetici d\'Italia.',
-              enNote:'The Colle dell\'Infinito at sunset: one of the most poetic places in Italy.',
-              deNote:'Colle dell\'Infinito bei Sonnenuntergang: einer der poetischsten Orte.',
-              plNote:'Colle dell\'Infinito o zachodzie: jedno z najbardziej poetyckich miejsc.',
-              itPhoto:'Dal belvedere vicino all\'Orto sul Colle dell\'Infinito.',
-              enPhoto:'From the belvedere near the garden on the Colle dell\'Infinito.',
-              dePhoto:'Vom Belvedere am Colle dell\'Infinito.',
-              plPhoto:'Z belwederu przy Colle dell\'Infinito.',
-              itTime:'2–4 ore.',enTime:'2–4 hours.',deTime:'2–4 Stunden.',plTime:'2–4 godziny.',
-              dist:'🚗 25 km – 38 min', mapQuery:'Recanati', lat:43.3980809, lng:13.5518423 }
-        ],
-
-        gastronomy: {
-            intro: {
-                it:'La cucina anconetana racconta il legame profondo tra mare e colline. Piatti di pesce, ricette tramandate da generazioni e prodotti del territorio rendono la gastronomia locale una delle esperienze da non perdere durante il soggiorno.',
-                en:'Ancona\'s cuisine tells of the deep bond between sea and hills. Fish dishes, recipes handed down through generations and local products make the local gastronomy one of the unmissable experiences of a stay.',
-                de:'Die anconitanische Küche erzählt von der Verbindung zwischen Meer und Hügeln.',
-                pl:'Kuchnia ankońska opowiada o głębokim związku między morzem a wzgórzami.'
-            },
-            hostTip: {
-                it:'Se soggiorni nel weekend o nei mesi estivi, prenota con anticipo, soprattutto per i ristoranti di pesce e quelli di Portonovo.',
-                en:'If staying at the weekend or in summer, book in advance, especially for fish restaurants and those at Portonovo.',
-                de:'Wochenende oder Sommer: Im Voraus buchen, besonders Fischrestaurants.',
-                pl:'Weekend lub lato: rezerwuj z wyprzedzeniem, szczególnie restauracje rybne.'
-            },
-            dishes: [
-                { name:'Brodetto all\'Anconetana', emoji:'🍲',
-                  it:'Il piatto simbolo. Nato a bordo delle barche da pesca con il pesce invendibile, prevede molte specie cucinate con pomodoro, cipolla, olio extravergine e una piccola quantità di aceto — l\'ingrediente che distingue il brodetto anconetano da altre versioni adriatiche.',
-                  en:'The signature dish. Born on fishing boats using unsaleable fish, it features many species cooked with tomato, onion, extra virgin olive oil and vinegar — the ingredient distinguishing it from other Adriatic versions.',
-                  de:'Das Wahrzeichen-Gericht. Viele Fischarten mit Tomaten, Zwiebeln, Öl und Essig.',
-                  pl:'Flagowe danie. Wiele gatunków ryb z pomidorami, cebulą i octem.' },
-                { name:'Moscioli Selvatici di Portonovo', emoji:'🦪',
-                  it:'Mitili selvatici delle rocce del Monte Conero, Presidio Slow Food. Raccolti solo da pescatori autorizzati in mare aperto, disponibili in determinati periodi.',
-                  en:'Wild mussels from the rocks of Monte Conero, Slow Food Presidium. Collected only by authorised fishermen in open sea, available in certain periods.',
-                  de:'Wilde Muscheln vom Monte Conero, Slow Food Presidium. Begrenzte Verfügbarkeit.',
-                  pl:'Dzikie małże Monte Conero, Slow Food Presidium. Ograniczona dostępność.' },
-                { name:'Stoccafisso all\'Anconetana', emoji:'🐟',
-                  it:'Lo stoccafisso arrivava da Norvegia sulle navi mercantili. Lunga cottura con patate, pomodoro, vino bianco, olive e aromi mediterranei.',
-                  en:'Stockfish arrived from Norway on merchant ships. Long cooking with potatoes, tomato, white wine, olives and Mediterranean aromatics.',
-                  de:'Stockfisch aus Norwegen. Lange mit Kartoffeln, Tomaten und Oliven gekocht.',
-                  pl:'Sztokfisz z Norwegii. Długo gotowany z ziemniakami i oliwkami.' },
-                { name:'Vincisgrassi', emoji:'🍝',
-                  it:'La versione marchigiana delle lasagne: strati di pasta fresca, ragù di carne e besciamella. Tradizionalmente serviti durante le festività.',
-                  en:'The Marche version of lasagne: layers of fresh pasta, meat ragù and béchamel. Traditionally served at festivities.',
-                  de:'Marken-Lasagne: frische Pasta, Fleischsauce, Béchamel.',
-                  pl:'Lasagne z Marchii: świeże ciasto, ragù mięsne, sos beszamelowy.' },
-                { name:'Rosso Conero DOC', emoji:'🍷',
-                  it:'Il vino del territorio, da uve Montepulciano sulle colline del Conero. Struttura, eleganza e profumi di frutti rossi. Numerose cantine aprono ai visitatori.',
-                  en:'The territory\'s wine, from Montepulciano grapes on the Conero hills. Structure, elegance and red fruit aromas. Many wineries open to visitors.',
-                  de:'Wein aus Montepulciano-Trauben. Viele Weingüter öffnen für Besucher.',
-                  pl:'Wino z winogron Montepulciano. Wiele winnic otwartych dla zwiedzających.' }
-            ],
-            restaurants: [
-                { name:'La Cantineta', emoji:'🍷', photo:'rist-cantineta.jpg', price:'€', hours:'12:30–14:30, 19:30–22:30', closedOn:[0,1], it:'Trattoria storica del centro. I tagliolini allo scoglio e lo stoccafisso all\'anconetana sono imperdibili.', en:'Historic trattoria in the centre. Tagliolini allo scoglio and stoccafisso all\'anconetana are unmissable.', de:'Historische Trattoria. Tagliolini und Stoccafisso sind Pflicht.', pl:'Historyczna trattoria. Tagliolini i stoccafisso obowiązkowe.', dist:'🚶 300 m – 4 min', mapQuery:'La Cantineta Ancona', lat:43.6192908, lng:13.5102798 },
-                { name:'Osteria del Pozzo', emoji:'🍲', photo:'rist-pozzo.jpg', price:'€', hours:'12:30–14:30, 19:30–22:30', closedOn:[0,1], it:'Una delle trattorie più apprezzate del centro storico. Cucina marchigiana semplice e autentica.', en:'One of the most appreciated trattorias in the historic centre. Simple, authentic Marche cuisine.', de:'Beliebte Trattoria der Altstadt.', pl:'Popularna trattoria centrum.', dist:'🚶 400 m – 5 min', mapQuery:'Osteria del Pozzo Ancona', lat:43.6202491, lng:13.5118220 },
-                { name:'Trattoria La Moretta', emoji:'🍸', photo:'rist-moretta.jpg', price:'€€', hours:'12:30–14:30, 19:30–22:30', closedOn:[0,1], it:'Storica trattoria di pesce nel centro storico. Ambiente tradizionale e cucina di qualità.', en:'Historic fish trattoria in the historic centre. Traditional setting and quality cuisine.', de:'Historische Fischtrattoria im Zentrum.', pl:'Historyczna trattoria rybna w centrum.', dist:'🚶 450 m – 6 min', mapQuery:'La Moretta Ancona', lat:43.6202772, lng:13.5110345 },
-                { name:'La Degosteria', emoji:'🍝', photo:'degosteria.jpg', price:'€€', hours:'12:30–14:30, 19:30–22:30', closedOn:[1], it:'Atmosfera intima nel cuore del centro storico. Cucina creativa tra pesce e terra, ottimo rapporto qualità-prezzo.', en:'Intimate atmosphere in the heart of the historic centre. Creative cuisine, excellent value for money.', de:'Intimes Ambiente. Kreative Küche, gutes Preis-Leistungs-Verhältnis.', pl:'Kameralna atmosfera. Kreatywna kuchnia, dobry stosunek jakości do ceny.', dist:'🚶 400 m – 6 min', mapQuery:'La Degosteria Ancona', lat:43.6202772, lng:13.5110345 },
-                { name:'Vino e Cucina Miscia', emoji:'🐟', photo:'rist-miscia.jpg', price:'€€', hours:'12:30–15:00, 19:30–22:30', closedOn:[0,1], it:'Tra i migliori crudi di pesce della città, nel quartiere Archi. Frequentato dai locali, prezzi onesti.', en:'Among the best raw fish in the city, in the Archi district. Frequented by locals, honest prices.', de:'Bestes Rohfisch im Archi-Viertel. Von Einheimischen besucht.', pl:'Najlepsze surowe ryby w dzielnicy Archi.', dist:'🚗 1 km – 2 min', mapQuery:'Vino e Cucina Miscia Ancona', lat:43.6126474, lng:13.5044134 },
-                { name:'Amélie', emoji:'🦐', photo:'rist-amelie.jpg', price:'€', hours:'12:00–15:00, 19:30–22:30', closedOn:[1], it:'Ristorante famigliare e amichevole. Ottimo il fritto misto di pesce.', en:'Family-run and friendly. Excellent mixed fried fish.', de:'Familiengeführt. Ausgezeichneter Fritto misto.', pl:'Rodzinny. Doskonały fritto misto.', dist:'🚗 2 km – 3 min', mapQuery:'Amelie Ancona', lat:43.6022208, lng:13.5060781 },
-                { name:'Giardino', emoji:'🌿', photo:'rist-giardino.jpg', price:'€€', hours:'12:30–14:30, 19:30–22:30', closedOn:[1], it:'Ristorante elegante lungo Viale della Vittoria che non delude mai.', en:'Elegant restaurant along Viale della Vittoria that never disappoints.', de:'Elegantes Restaurant, nie enttäuschend.', pl:'Elegancka restauracja, nigdy nie zawodzi.', dist:'🚶 1350 m – 18 min', mapQuery:'Il Giardino Ancona', lat:43.6158317, lng:13.5257132 },
-                { name:'Marcello (Portonovo)', emoji:'🍝', photo:'rist-marcello.jpg', price:'€€', hours:'12:00–15:30, 19:30–22:30', closedOn:[], it:'Storico ristorante di pesce affacciato sul mare di Portonovo. In estate si cena sulla spiaggia.', en:'Historic fish restaurant overlooking Portonovo bay. In summer, dining on the beach.', de:'Historisches Fischrestaurant über der Bucht. Im Sommer am Strand.', pl:'Historyczna restauracja nad zatoką. Latem kolacja na plaży.', dist:'🚌 12 km – 25 min', mapQuery:'Ristorante Marcello Portonovo Ancona', lat:43.5641460, lng:13.5910907 }
-            ],
-            barpub: [
-                { name:'Bar Torino', emoji:'☕', photo:'', hours:'06:30–21:00', closedOn:[0], it:'Storico bar di Corso Garibaldi, aperto dal 1921. L\'aperitivo serale sul marciapiede è un rito locale.', en:'Historic bar on Corso Garibaldi, open since 1921. The evening aperitif on the pavement is a local ritual.', de:'Bar seit 1921. Aperitif auf dem Bürgersteig.', pl:'Bar od 1921. Aperitif na chodniku.', dist:'🚶 100 m – 1 min', mapQuery:'Bar Torino Ancona', lat:43.6182553, lng:13.5118948 },
-                { name:'Cremeria Pincini', emoji:'🍦', photo:'', hours:'', closedOn:[], it:'La migliore gelateria di Ancona, a due passi da casa. Gelato artigianale con ingredienti selezionati.', en:'The best ice cream parlour in Ancona, just steps away. Artisan gelato.', de:'Beste Eisdiele Anconas, gleich um die Ecke.', pl:'Najlepsza lodziarnia, tuż obok.', dist:'🚶 50 m – 1 min', mapQuery:'Cremeria Pincini Ancona', lat:43.6187357, lng:13.5113141 },
-                { name:'Il Chiosco Da Morena', emoji:'🦪', photo:'', hours:'11:00–21:00 (sab–dom 11:00–22:00)', closedOn:[], it:'Street food di mare, frutti di mare freschi all\'aperto. Alternativa veloce per chi vuole pesce senza ristorante.', en:'Seafood street food outdoors. Quick alternative for fish without a sit-down restaurant.', de:'Meeresfrüchte-Streetfood draußen.', pl:'Street food z owocami morza na świeżym powietrzu.', dist:'🚶 250 m – 3 min', mapQuery:'Il Chiosco Da Morena Ancona', lat:43.6185138, lng:13.5125208 },
-                { name:'Bar Giuliani', emoji:'☕', photo:'', hours:'06:00–24:00', closedOn:[], it:'Bar, tabacchi, gelateria, ristorante, pizzeria. L\'unico bar del centro aperto anche la domenica fino a tarda ora.', en:'Bar, tobacconist, ice cream, restaurant, pizzeria. The only city centre bar open on Sundays until late.', de:'Bar, Tabak, Eis, Restaurant, Pizzeria. Auch sonntags bis spät.', pl:'Bar, tytoń, lody, restauracja, pizzeria. Otwarty w niedziele do późna.', dist:'🚶 300 m – 4 min', mapQuery:'Bar Giuliani Ancona', lat:43.6186929, lng:13.5101527 },
-                { name:'Pizzeria Domus', emoji:'🍕', photo:'rist-domus.jpg', hours:'12:00–14:30, 19:00–23:00', closedOn:[1], it:'Ottima pizzeria a pochi passi da casa. Consigliata la pizza regina 😉', en:'Great pizzeria just steps from home. The pizza regina is highly recommended 😉', de:'Tolle Pizzeria, wenige Schritte. Pizza Regina empfohlen 😉', pl:'Doskonała pizzeria. Pizza regina polecana 😉', dist:'🚶 100 m – 1 min', mapQuery:'Pizzeria Domus Ancona', lat:43.6182580, lng:13.5138206 },
-                { name:'La Farina', emoji:'🍕', photo:'', hours:'08:00–20:00', closedOn:[0], it:'Pizza al taglio ben lievitata con toppings stagionali. Ideale per un pranzo veloce di qualità.', en:'Well-leavened pizza by the slice with seasonal toppings. Ideal for a quick quality lunch.', de:'Gut aufgegangene Pizzastücke. Ideal für schnelles Mittagessen.', pl:'Pizza na kawałki z sezonowymi dodatkami.', dist:'🚶 300 m – 4 min', mapQuery:'La Farina Ancona', lat:43.6191247, lng:13.5103683 },
-                { name:'Lasagneria Filotea', emoji:'🍝', photo:'rist-filotea.jpg', hours:'11:30–14:30', closedOn:[0,6], it:'Ottime lasagne da asporto a due passi da casa.', en:'Excellent takeaway lasagne just steps from home.', de:'Ausgezeichnete Lasagne zum Mitnehmen.', pl:'Doskonałe lasagne na wynos.', dist:'🚶 200 m – 3 min', mapQuery:'Lasagneria Filotea Ancona', lat:43.6175592, lng:13.5143695 },
-                { name:'Il Chiosco', emoji:'🍹', photo:'', hours:'08:00–24:00', closedOn:[], it:'Bar all\'aperto in piazza Cavour. Atmosfera giovane e vivace, ideale per un aperitivo.', en:'Open-air bar in Piazza Cavour. Lively atmosphere, ideal for an aperitif.', de:'Freiluftbar an der Piazza Cavour.', pl:'Bar na świeżym powietrzu na Piazza Cavour.', dist:'🚶 550 m – 7 min', mapQuery:'Il Chiosco Ancona', lat:43.6168065, lng:13.5175774 },
-                { name:'Donegal Irish Pub', emoji:'🍺', photo:'', hours:'18:00–02:00', closedOn:[1], it:'Pub irlandese, birre alla spina e musica dal vivo.', en:'Irish pub, draught beers and live music.', de:'Irish Pub, Fassbier und Livemusik.', pl:'Irlandzki pub, piwo z kranu i muzyka na żywo.', dist:'🚶 400 m – 5 min', mapQuery:'Donegal Irish Pub Ancona', lat:43.6163846, lng:13.5156090 }
-            ]
-        },
-
-        services: {
-            supermarkets: [
-                { name:'Coal – Via Podesti', emoji:'🛒', photo:'', hours:'08:00–20:00', closedOn:[0], it:'Il più vicino a casa. Ben fornito.', en:'The closest to home. Well stocked.', de:'Der nächste. Gut sortiert.', pl:'Najbliższy domu. Dobrze zaopatrzony.', dist:'🚶 150 m – 2 min', mapQuery:'Coal Via Podesti Ancona', lat:43.6181806, lng:13.5112789 },
-                { name:'Mercato delle Erbe', emoji:'🥬', photo:'mercato-erbe.jpg', hours:'07:00–13:30', closedOn:[0], it:'Storico mercato coperto, solo la mattina. Frutta, verdura, pesce fresco, forno, stoccafisso, macelleria.', en:'Historic covered market, mornings only. Fruit, vegetables, fresh fish, bakery, stockfish, butcher.', de:'Historischer Markt, nur morgens.', pl:'Historyczny targ kryty, tylko rano.', dist:'🚶 100 m – 1 min', mapQuery:'Mercato delle Erbe Ancona', lat:43.6182992, lng:13.5140040 },
-                { name:'Coal – Via San Martino', emoji:'🛒', photo:'', hours:'08:00–20:00', closedOn:[], it:'Aperto anche domenica mattina e festivi.', en:'Open also on Sunday mornings and public holidays.', de:'Auch Sonntagmorgen und Feiertage.', pl:'Otwarty w niedziele i święta.', dist:'🚶 400 m – 5 min', mapQuery:'Coal Via San Martino Ancona', lat:43.6158232, lng:13.5145948 },
-                { name:'Sì con te', emoji:'🛒', photo:'', hours:'08:00–20:30', closedOn:[0], it:'Orario lungo fino alle 20:30. Buon reparto macelleria.', en:'Long hours until 20:30. Good butcher\'s counter.', de:'Bis 20:30 Uhr. Gute Fleischtheke.', pl:'Do 20:30. Dobry dział mięsny.', dist:'🚶 350 m – 5 min', mapQuery:'Via Matteotti 115 Ancona', lat:43.6186104, lng:13.5163007 }
-            ],
-            parking: [
-                { name:'Parcheggio degli Archi', emoji:'🅿️', photo:'parcheggio-archi.jpg', it:'Consigliato. 587 posti, 05:30–21:00 lun–sab. €0,50/h prime 3h, poi €2 forfait; €8/giorno. Biglietto include bus A/R per il centro.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">🔗 Tariffe complete →</a>', en:'Recommended. 587 spaces, 05:30–21:00 Mon–Sat. €0.50/h first 3h, then €2 flat; €8/day. Ticket includes return bus to centre.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">🔗 Full rates →</a>', de:'Empfohlen. 587 Plätze. Bus inklusive.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">🔗 Tarife →</a>', pl:'Polecany. 587 miejsc. Bilet z busem.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">🔗 Taryfy →</a>', dist:'🚗 1 km – 2 min', mapQuery:'Parcheggio degli Archi Ancona', lat:43.6098074, lng:13.5032732 },
-                { name:'Parcheggio Traiano', emoji:'🅿️', photo:'', it:'Via XXIX Settembre 2. 152 posti, 24h/7. €1,20 prima ora, poi €0,30/15 min; €28,80/gg.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-traiano/" target="_blank" rel="noopener noreferrer">🔗 Tariffe →</a>', en:'Via XXIX Settembre 2. 152 spaces, 24/7. €1.20 first hour, €0.30/15 min; €28.80/day.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-traiano/" target="_blank" rel="noopener noreferrer">🔗 Rates →</a>', de:'152 Plätze, 24/7.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-traiano/" target="_blank" rel="noopener noreferrer">🔗 Tarife →</a>', pl:'152 miejsca, 24/7.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-traiano/" target="_blank" rel="noopener noreferrer">🔗 Taryfy →</a>', dist:'🚶 550 m – 7 min', mapQuery:'Parcheggio Traiano Ancona', lat:43.6175179, lng:13.5079818 },
-                { name:'Parcheggio Cialdini', emoji:'🅿️', photo:'', it:'Via Cialdini 2. 70 posti, lun–sab 07–21. Non custodito, h max 1,75 m.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-cialdini/" target="_blank" rel="noopener noreferrer">🔗 Tariffe →</a>', en:'Via Cialdini 2. 70 spaces, Mon–Sat 07–21. Unattended, max 1.75 m.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-cialdini/" target="_blank" rel="noopener noreferrer">🔗 Rates →</a>', de:'70 Plätze, Mo–Sa 07–21. Unbewacht.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-cialdini/" target="_blank" rel="noopener noreferrer">🔗 Tarife →</a>', pl:'70 miejsc, pon–sob 07–21.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-cialdini/" target="_blank" rel="noopener noreferrer">🔗 Taryfy →</a>', dist:'🚶 600 m – 8 min', mapQuery:'Parcheggio Cialdini Ancona', lat:43.6181927, lng:13.5094775 },
-                { name:'Parcheggio Stamira', emoji:'🅿️', photo:'', it:'Privato, sotterraneo, il più vicino, il più caro. Aperto 24h.', en:'Private, underground, the closest, the most expensive. Open 24h.', de:'Privat, unterirdisch, nächster, teuerster. 24h.', pl:'Prywatny, podziemny, najbliższy, najdroższy. 24h.', dist:'🚶 400 m – 5 min', mapQuery:'Parcheggio Stamira Ancona', lat:43.6162329, lng:13.5154477 },
-                { name:'Parcheggio Umberto I°', emoji:'🅿️', photo:'', it:'Via Orsi ang. Via Maratta. 98 posti, lun–sab 07–21. €1,20/h. Il più economico.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-umberto-i/" target="_blank" rel="noopener noreferrer">🔗 Tariffe →</a>', en:'Via Orsi/Via Maratta. 98 spaces, Mon–Sat 07–21. €1.20/h. The cheapest.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-umberto-i/" target="_blank" rel="noopener noreferrer">🔗 Rates →</a>', de:'98 Plätze, Mo–Sa 07–21. Günstigster.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-umberto-i/" target="_blank" rel="noopener noreferrer">🔗 Tarife →</a>', pl:'98 miejsc, pon–sob 07–21. Najtańszy.<br><a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-umberto-i/" target="_blank" rel="noopener noreferrer">🔗 Taryfy →</a>', dist:'🚶 1,3 km – 16 min', mapQuery:'Parcheggio Umberto I Ancona Via Orsi' }
-            ]
-        },
-
-        apartment: {
-            wifi: { it:'Nome rete: AncenaCentro2025<br>Password: piazzaroma3', en:'Network: AncenaCentro2025<br>Password: piazzaroma3', de:'Netzwerk: AncenaCentro2025<br>Passwort: piazzaroma3', pl:'Sieć: AncenaCentro2025<br>Hasło: piazzaroma3' },
-            access: { it:'Citofono: Frisoli. Codice: 14.', en:'Intercom: Frisoli. Code: 14.', de:'Gegensprechanlage: Frisoli. Code: 14.', pl:'Domofon: Frisoli. Kod: 14.' },
-            keys: { it:'Le chiavi si trovano nella cassettina a codice all\'interno. Codice: 2409.', en:'Keys are in the code box inside. Code: 2409.', de:'Schlüssel in der Codebox innen. Code: 2409.', pl:'Klucze w skrzynce z kodem. Kod: 2409.' },
-            checkin: { it:'Check-in flessibile dalle 14:00. Contattami per anticipo o ritardo.', en:'Flexible check-in from 14:00. Contact me for early or late arrival.', de:'Flexibler Check-in ab 14:00.', pl:'Elastyczne zameldowanie od 14:00.' },
-            checkout: { it:'Check-out entro le 11:00. Lascia le chiavi sul tavolo della cucina.', en:'Check-out by 11:00. Leave the keys on the kitchen table.', de:'Check-out bis 11:00. Schlüssel auf dem Küchentisch.', pl:'Wymeldowanie do 11:00. Klucze na stole kuchennym.' },
-            quietHours: { it:'Silenzio dalle 22:00 alle 08:00 e durante le ore pasti.', en:'Quiet hours from 22:00 to 08:00 and during meal times.', de:'Ruhezeiten 22:00–08:00 und während der Mahlzeiten.', pl:'Cisza 22:00–08:00 i podczas posiłków.' },
-            recycling: { it:'I bidoni si trovano nel cortile sul retro, accessibile dal vicolo laterale a sinistra del portone. Differenziata obbligatoria.', en:'Bins are in the courtyard at the back, accessible from the side alley left of the entrance. Separate collection is mandatory.', de:'Container im Hinterhof, zugänglich über die linke Seitengasse. Mülltrennung Pflicht.', pl:'Pojemniki w tylnym dziedzińcu, lewa boczna uliczka. Segregacja obowiązkowa.' },
-            reach: {
-                auto: { it:'Nei dintorni è possibile parcheggiare sulle strisce blu (a pagamento dalle 8 alle 20 a 1,20€/h nei giorni feriali) ma è difficile trovare posto. Consiglio il <a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">Parcheggio degli Archi</a>, ad 1,5 km, raggiungibile a piedi con una passeggiata panoramica su porto e duomo. Se preferisci l\'autobus prendi il bus 1/4 direzione centro, scendi in piazza Roma: 5 minuti.', en:'Around the apartment blue bays are available (paid 08:00–20:00 at €1.20/h weekdays) but spaces are hard to find. I recommend the <a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">Parcheggio degli Archi</a>, 1.5 km, reachable on foot with a scenic walk over port and cathedral. Bus 1/4 direction centre, stop Piazza Roma, 5 minutes.', de:'Blaue Parkstreifen in der Nähe (gebührenpflichtig 8–20 Uhr), aber Plätze schwer zu finden. Empfehle <a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">Parcheggio degli Archi</a>, 1,5 km. Bus 1/4 Richtung Zentrum.', pl:'Niebieskie pasy w pobliżu (płatne 8–20 w dni robocze), ale miejsca trudno znaleźć. Polecam <a href="https://anconaservizi.it/parcheggi-coperti/parcheggio-scambiatore-degli-archi/" target="_blank" rel="noopener noreferrer">Parcheggio degli Archi</a>, 1,5 km. Bus 1/4 kierunek centrum.' },
-                train: { it:'La stazione di Ancona è a 1,5 km. In taxi circa 5 minuti, €8–10. In autobus con la linea 1/4 direzione centro, fermata Piazza Roma.', en:'Ancona station is 1.5 km away. By taxi about 5 minutes, €8–10. By bus line 1/4 direction centre, stop Piazza Roma.', de:'Bahnhof 1,5 km entfernt. Taxi ca. 5 Min., €8–10. Bus 1/4 Richtung Zentrum.', pl:'Dworzec 1,5 km stąd. Taksówką ok. 5 min, €8–10. Bus 1/4 kierunek centrum.' },
-                ferry: { it:'Porto Traghetti: 2 km, circa 10 min in taxi. Traghetti per Croazia, Grecia e Albania.<br><a href="https://www.directferries.it" target="_blank" rel="noopener noreferrer" style="color:var(--navy-3);font-weight:600;">⛴️ DirectFerries →</a>', en:'Ferry Port: 2 km, about 10 min by taxi. Ferries to Croatia, Greece and Albania.<br><a href="https://www.directferries.it" target="_blank" rel="noopener noreferrer" style="color:var(--navy-3);font-weight:600;">⛴️ DirectFerries →</a>', de:'Fährhafen: 2 km, ca. 10 Min. Taxi.<br><a href="https://www.directferries.it" target="_blank" rel="noopener noreferrer" style="color:var(--navy-3);font-weight:600;">⛴️ DirectFerries →</a>', pl:'Port promowy: 2 km, ok. 10 min taksówką.<br><a href="https://www.directferries.it" target="_blank" rel="noopener noreferrer" style="color:var(--navy-3);font-weight:600;">⛴️ DirectFerries →</a>' },
-                airport: { it:'Aeroporto Falconara "Raffaello Sanzio": 15 km, circa 30 min in auto, bus o treno.', en:'Falconara Airport "Raffaello Sanzio": 15 km, about 30 min by car, bus or train.', de:'Flughafen Falconara: 15 km, ca. 30 Min.', pl:'Lotnisko Falconara: 15 km, ok. 30 min.' }
-            }
-        },
-
-        social: { instagram: 'https://www.instagram.com/anconacentro', facebook: 'https://www.facebook.com/profile.php?id=61575688633462', signal: 'https://signal.me/#p/+393356750269', telegram: 'https://t.me/gfrisoli' },
-        subItineraries: {}
+const appData = {
+    mustsee: [
+        { order:1, name:'Fontana del Calamo (Le 13 Cannelle)', emoji:'⛲', photo:'fontana-calamo.jpg',
+          it:'Conosciuta dagli anconetani come la Fontana delle 13 Cannelle, è uno dei simboli più autentici della città e rappresenta il punto ideale da cui iniziare la scoperta del centro storico. L\'attuale aspetto rinascimentale risale alla metà del Cinquecento, ma la sorgente era già utilizzata nei secoli precedenti per rifornire d\'acqua abitanti e marinai. Le tredici maschere in bronzo, da cui sgorga l\'acqua, hanno dato origine al nome con cui la fontana è ancora oggi conosciuta. Di fronte alla fontana una targa ricorda l\'antica Porta del Calamo, uno degli ingressi medievali della città, demolita dopo l\'Unità d\'Italia nel 1860 per favorire l\'espansione urbana. Da qui si percorre Corso Mazzini, una delle vie più animate di Ancona, che conduce in pochi minuti a Piazza della Repubblica e al prestigioso Teatro delle Muse, prima tappa del percorso.',
+          en:'Known to locals as the Fountain of the 13 Spouts, it is one of the most authentic symbols of the city and the ideal starting point for discovering the historic centre. The current Renaissance appearance dates back to the mid-16th century, but the spring was already used in previous centuries to supply water to residents and sailors. The thirteen bronze masks from which water flows gave the fountain its name. In front of the fountain, a plaque commemorates the ancient Porta del Calamo, one of the medieval city gates demolished after Italian unification in 1860 to facilitate urban expansion. From here, walk along Corso Mazzini, one of Ancona\'s most lively streets, leading in minutes to Piazza della Repubblica and the prestigious Teatro delle Muse, the first stop on the route.',
+          de:'Bekannt bei den Einheimischen als der Brunnen der 13 Röhren, ist er eines der authentischsten Symbole der Stadt und der ideale Ausgangspunkt für die Entdeckung der Altstadt. Das heutige Renaissance-Aussehen stammt aus der Mitte des 16. Jahrhunderts, aber die Quelle wurde bereits in früheren Jahrhunderten zur Wasserversorgung von Einwohnern und Seeleuten genutzt. Die dreizehn Bronzemasken, aus denen Wasser fließt, gaben dem Brunnen seinen Namen. Vor dem Brunnen erinnert eine Tafel an das alte Porta del Calamo, eines der mittelalterlichen Stadttore, das nach der Einigung Italiens 1860 abgerissen wurde, um die städtische Expansion zu erleichtern. Von hier aus führt die Corso Mazzini, eine der lebhaftesten Straßen Anconas, in wenigen Minuten zur Piazza della Repubblica und zum prestigeträchtigen Teatro delle Muse, der ersten Station der Route.',
+          pl:'Znana przez mieszkańców jako Fontanna 13 Dysz, jest jednym z najbardziej autentycznych symboli miasta i idealnym punktem wyjścia do odkrywania historycznego centrum. Obecny wygląd renesansowy pochodzi z połowy XVI wieku, ale źródło było wykorzystywane w poprzednich wiekach do zaopatrywania w wodę mieszkańców i żeglarzy. Trzynaście brązowych masek, z których wypływa woda, dało fontannie jej nazwę. Przed fontanną tablica upamiętnia starą Porta del Calamo, jedną z bram średniowiecznego miasta, zburzoną po zjednoczeniu Włoch w 1860 roku dla ułatwienia ekspansji miejskiej. Stąd ulica Corso Mazzini, jedna z najbardziej ruchliwych ulic Ancony, prowadzi w kilka minut na Piazza della Repubblica i do prestiżowego Teatro delle Muse, pierwszego przystanku na trasie.',
+          lat:43.6172, lon:13.5106, next:'Teatro delle Muse' },
+        { order:2, name:'Teatro delle Muse', emoji:'🎭', photo:'teatro-muse.jpg',
+          it:'Il Teatro delle Muse è il principale teatro delle Marche e il cuore della vita culturale di Ancona. Inaugurato nel 1827 in elegante stile neoclassico, rappresenta ancora oggi uno dei luoghi più importanti della città per concerti, opere liriche, spettacoli di prosa e danza. Gravemente danneggiato durante i bombardamenti della Seconda guerra mondiale, rimase chiuso per molti decenni prima di essere completamente restaurato e restituito alla città nel 2002. La piazza antistante è uno dei punti d\'incontro preferiti dagli anconetani e spesso ospita eventi e manifestazioni. Lasciando il teatro alle spalle e imboccando Via della Loggia si entra in una delle zone più affascinanti della città medievale, dove si incontrano Palazzo Benincasa e la splendida Loggia dei Mercanti.',
+          en:'The Teatro delle Muse is the main theatre of the Marche region and the heart of Ancona\'s cultural life. Inaugurated in 1827 in elegant neoclassical style, it remains one of the city\'s most important venues for concerts, opera, theatre and dance performances. Severely damaged during World War II bombing, it remained closed for many decades before being fully restored and returned to the city in 2002. The square in front is one of the favourite meeting places for the people of Ancona and often hosts events and festivals. Leaving the theatre behind and entering Via della Loggia, you enter one of the most fascinating areas of the medieval city, where Palazzo Benincasa and the splendid Loggia dei Mercanti are found.',
+          de:'Das Teatro delle Muse ist das wichtigste Theater der Region Marken und das Herz des kulturellen Lebens von Ancona. 1827 im eleganten neoklassizistischen Stil eingeweiht, ist es bis heute einer der wichtigsten Orte der Stadt für Konzerte, Opern, Schauspiel- und Tanzaufführungen. Schwer beschädigt während der Bombardierungen im Zweiten Weltkrieg, blieb es viele Jahrzehnte geschlossen, bevor es 2002 vollständig restauriert und der Stadt zurückgegeben wurde. Der Platz davor ist einer der beliebtesten Treffpunkte der Anconetani und beherbergt oft Veranstaltungen und Festivals. Wenn man das Theater hinter sich lässt und die Via della Loggia betritt, gelangt man in einen der faszinierendsten Bereiche der mittelalterlichen Stadt, wo sich Palazzo Benincasa und die prächtige Loggia dei Mercanti befinden.',
+          pl:'Teatro delle Muse to główny teatr regionu Marche i serce kulturalnego życia Ancony. Uroczyście otwarty w 1827 roku w eleganckim stylu neoklasycystycznym, wciąż jest jednym z najważniejszych miejsc w mieście na koncerty, opery, spektakle teatralne i taneczne. Poważnie uszkodzony podczas bombardowań w II wojnie światowej, pozostawał zamknięty przez wiele dziesięcioleci, zanim został w pełni odrestaurowany i zwrócony miastu w 2002 roku. Plac przed teatrem jest jednym z ulubionych miejsc spotkań mieszkańców Ancony i często gości wydarzenia oraz festiwale. Opuszczając teatr i wchodząc w Via della Loggia, wkraczasz w jeden z najbardziej fascynujących zakątków średniowiecznego miasta, gdzie spotykasz Palazzo Benincasa i wspaniałą Loggia dei Mercanti.',
+          lat:43.6178, lon:13.5115, next:'Loggia dei Mercanti' },
+        { order:3, name:'Loggia dei Mercanti', emoji:'🏛️', photo:'loggia-mercanti.jpg',
+          it:'La Loggia dei Mercanti è uno dei più raffinati esempi di architettura gotico-rinascimentale di Ancona. Costruita nel Quattrocento su progetto di Giorgio da Sebenico, lo stesso architetto del vicino Palazzo Benincasa, era il luogo dove mercanti provenienti da tutto il Mediterraneo concludevano affari e commerci. La ricca facciata in pietra racconta l\'importanza economica che Ancona ebbe come Repubblica Marinara e porto commerciale, crocevia di culture, lingue e popoli. Fermatevi qualche istante ad osservare i dettagli delle decorazioni: testimoniano la ricchezza raggiunta dalla città durante il suo periodo di massimo splendore. Proseguendo lungo Via della Loggia si raggiunge la Chiesa di Santa Maria della Piazza, uno dei monumenti religiosi più importanti e suggestivi di Ancona.',
+          en:'The Loggia dei Mercanti is one of the finest examples of Gothic-Renaissance architecture in Ancona. Built in the 15th century to a design by Giorgio da Sebenico, the same architect of the nearby Palazzo Benincasa, it was the place where merchants from all over the Mediterranean concluded business and trade. The rich stone facade tells of the economic importance that Ancona had as a Maritime Republic and commercial port, a crossroads of cultures, languages and peoples. Stop for a moment to observe the details of the decorations: they testify to the wealth the city achieved during its period of greatest splendour. Continuing along Via della Loggia, you reach the Church of Santa Maria della Piazza, one of Ancona\'s most important and evocative religious monuments.',
+          de:'Die Loggia dei Mercanti ist eines der feinsten Beispiele der gotisch-renaissance Architektur in Ancona. Erbaut im 15. Jahrhundert nach einem Entwurf von Giorgio da Sebenico, demselben Architekten des nahegelegenen Palazzo Benincasa, war es der Ort, an dem Kaufleute aus dem gesamten Mittelmeer Geschäfte und Handel abschlossen. Die reiche Steinfassade erzählt von der wirtschaftlichen Bedeutung, die Ancona als Seerepublik und Handelshafen hatte, einem Kreuzweg von Kulturen, Sprachen und Völkern. Halten Sie einen Moment inne, um die Details der Dekorationen zu betrachten: sie zeugen vom Reichtum, den die Stadt während ihrer Zeit größten Glanzes erreichte. Entlang der Via della Loggia erreicht man die Kirche Santa Maria della Piazza, eines der wichtigsten und eindrucksvollsten religiösen Denkmäler von Ancona.',
+          pl:'Loggia dei Mercanti to jeden z najwspanialszych przykładów architektury gotycko-renesansowej w Anconie. Zbudowana w XV wieku według projektu Giorgia da Sebenico, tego samego architekta pobliskiego Palazzo Benincasa, była miejscem, gdzie kupcy z całego Morza Śródziemnego zawierali interesy i handlowali. Bogata kamienna fasada opowiada o znaczeniu ekonomicznym, jakie Ancona miała jako Republika Morska i port handlowy, skrzyżowanie kultur, języków i narodów. Zatrzymaj się na chwilę, aby przyjrzeć się szczegółom dekoracji: świadczą one o bogactwie, jakiego miasto doświadczyło w okresie swojego największego rozkwitu. Kontynuując spacer Via della Loggia, dochodzisz do Kościoła Santa Maria della Piazza, jednego z najważniejszych i najbardziej sugestywnych zabytków sakralnych Ancony.',
+          lat:43.6179, lon:13.5120, next:'Chiesa di Santa Maria della Piazza' },
+        { order:4, name:'Chiesa di Santa Maria della Piazza', emoji:'⛪', photo:'santa-maria-piazza.jpg',
+          it:'La Chiesa di Santa Maria della Piazza è uno dei più preziosi esempi di architettura romanica delle Marche. Edificata tra l\'XI e il XII secolo, sorge sui resti di una basilica paleocristiana del IV secolo, testimoniando oltre millecinquecento anni di storia e di fede. La sua elegante facciata, impreziosita da archetti e decorazioni scolpite nella pietra bianca del Conero, è considerata uno dei capolavori del romanico adriatico. All\'interno, una parte del pavimento è realizzata in vetro e permette di osservare gli straordinari mosaici della chiesa paleocristiana sottostante, visitabile accedendo al piano inferiore. Di fronte alla chiesa si apre la storica Portella Santa Maria, uno degli antichi passaggi aperti lungo il muro fronte mare che collegava direttamente il centro cittadino al porto. Per secoli mercanti, pellegrini e marinai hanno attraversato questo stesso varco entrando nella Repubblica Marinara di Ancona. Proseguendo verso destra lungo il porto, dopo circa trecento metri, si raggiunge uno dei monumenti simbolo della città: il maestoso Arco di Traiano.',
+          en:'The Church of Santa Maria della Piazza is one of the most precious examples of Romanesque architecture in the Marche region. Built between the 11th and 12th centuries, it stands on the remains of a 4th-century Paleo-Christian basilica, testifying to over fifteen hundred years of history and faith. Its elegant facade, embellished with arches and decorations carved in the white stone of Conero, is considered one of the masterpieces of Adriatic Romanesque. Inside, part of the floor is made of glass and allows you to observe the extraordinary mosaics of the underlying Paleo-Christian church, which can be visited by accessing the lower floor. In front of the church opens the historic Portella Santa Maria, one of the ancient passages opened along the seafront wall that directly connected the city centre to the port. For centuries, merchants, pilgrims and sailors have crossed this same passage entering the Maritime Republic of Ancona. Proceeding to the right along the port, after about three hundred metres, you reach one of the city\'s symbolic monuments: the majestic Arch of Trajan.',
+          de:'Die Kirche Santa Maria della Piazza ist eines der wertvollsten Beispiele romanischer Architektur in der Region Marken. Erbaut zwischen dem 11. und 12. Jahrhundert, steht sie auf den Überresten einer frühchristlichen Basilika aus dem 4. Jahrhundert und zeugt von über fünfzehnhundert Jahren Geschichte und Glauben. Ihre elegante Fassade, verziert mit Bögen und Verzierungen, die in den weißen Stein des Conero gemeißelt sind, gilt als eines der Meisterwerke der adriatischen Romanik. Im Inneren ist ein Teil des Bodens aus Glas und ermöglicht es, die außergewöhnlichen Mosaiken der darunterliegenden frühchristlichen Kirche zu betrachten, die über das Untergeschoss besichtigt werden kann. Vor der Kirche öffnet sich die historische Portella Santa Maria, einer der alten Durchgänge, die entlang der Mauer am Meer eröffnet wurden und das Stadtzentrum direkt mit dem Hafen verbanden. Jahrhunderte lang haben Kaufleute, Pilger und Seeleute diesen gleichen Durchgang passiert, um in die Seerepublik Ancona einzutreten. Weiter nach rechts entlang des Hafens, nach etwa dreihundert Metern, erreicht man eines der symbolträchtigsten Denkmäler der Stadt: den majestätischen Bogen des Trajan.',
+          pl:'Kościół Santa Maria della Piazza to jeden z najcenniejszych przykładów architektury romańskiej w regionie Marche. Zbudowany między XI a XII wiekiem, stoi na ruinach bazyliki paleochrześcijańskiej z IV wieku, świadcząc o ponad piętnastu wiekach historii i wiary. Jego elegancka fasada, ozdobiona łukami i dekoracjami wyrzeźbionymi w białym kamieniu Conero, jest uważana za jedno z arcydzieł romaniku adriatyckiego. Wewnątrz, część podłogi jest wykonana ze szkła i pozwala obserwować niezwykłe mozaiki podziemnego kościoła paleochrześcijańskiego, dostępnego z niższej kondygnacji. Przed kościołem otwiera się historyczna Portella Santa Maria, jedno ze starożytnych przejść wykutych w murze nadmorskim, które bezpośrednio łączyło centrum miasta z portem. Przez wieki kupcy, pielgrzymi i żeglarze przekraczali to samo przejście, wchodząc do Republiki Morskiej Ancony. Kontynuując w prawo wzdłuż portu, po około trzystu metrach docierasz do jednego z symboli miasta: majestatycznego Łuku Trajana.',
+          lat:43.6182, lon:13.5128, next:'Arco di Traiano' },
+        { order:5, name:'Arco di Traiano', emoji:'🏛️', photo:'arco-traiano.jpg',
+          it:'L\'Arco di Traiano è il monumento romano più celebre di Ancona e uno dei meglio conservati dell\'intero Adriatico. Fu eretto nel 115 d.C. per volontà del Senato Romano in onore dell\'imperatore Traiano, che finanziò personalmente l\'ampliamento del porto, trasformando Ancona in uno degli scali più importanti del Mediterraneo. Realizzato in candido marmo greco proveniente dall\'isola di Paro, l\'arco colpisce ancora oggi per l\'eleganza delle sue proporzioni e per la posizione spettacolare, affacciata direttamente sul mare. Pur avendo perso nei secoli le statue bronzee che lo decoravano, conserva intatto il suo straordinario valore storico e artistico. Fermatevi qualche istante ad ammirare il panorama: davanti a voi si estende il porto moderno, mentre alle spalle si innalza il profilo del colle Guasco con la Cattedrale di San Ciriaco. È uno dei punti più fotografati di Ancona. Pochi passi più avanti si incontra un altro importante monumento vanvitelliano: l\'Arco Clementino.',
+          en:'The Arch of Trajan is the most famous Roman monument in Ancona and one of the best preserved in the entire Adriatic. It was erected in 115 AD by order of the Roman Senate in honour of Emperor Trajan, who personally financed the expansion of the port, transforming Ancona into one of the most important ports in the Mediterranean. Built in gleaming Greek marble from the island of Paros, the arch still impresses today with the elegance of its proportions and its spectacular position, directly overlooking the sea. Although it lost the bronze statues that decorated it over the centuries, it retains its extraordinary historical and artistic value intact. Stop for a moment to admire the panorama: before you stretches the modern port, while behind you rises the profile of Colle Guasco with the Cathedral of San Ciriaco. It is one of the most photographed spots in Ancona. A few steps further on, you encounter another important Vanvitelli monument: the Arco Clementino.',
+          de:'Der Trajansbogen ist das berühmteste römische Denkmal von Ancona und eines der am besten erhaltenen im gesamten Adriaraum. Er wurde 115 n. Chr. auf Beschluss des römischen Senats zu Ehren des Kaisers Trajan errichtet, der den Ausbau des Hafens persönlich finanzierte und Ancona in einen der wichtigsten Häfen des Mittelmeers verwandelte. Aus glänzendem griechischem Marmor von der Insel Paros gebaut, beeindruckt der Bogen noch heute durch die Eleganz seiner Proportionen und seine spektakuläre Lage direkt am Meer. Obwohl er im Laufe der Jahrhunderte die Bronzestatuen verlor, die ihn schmückten, bewahrt er seinen außergewöhnlichen historischen und künstlerischen Wert unversehrt. Halten Sie einen Moment inne, um das Panorama zu bewundern: vor Ihnen erstreckt sich der moderne Hafen, während sich hinter Ihnen das Profil des Colle Guasco mit der Kathedrale San Ciriaco erhebt. Es ist einer der am meisten fotografierten Orte von Ancona. Wenige Schritte weiter begegnet man einem weiteren wichtigen Vanvitelli-Denkmal: dem Arco Clementino.',
+          pl:'Łuk Trajana to najsłynniejszy zabytek rzymski w Anconie i jeden z najlepiej zachowanych w całym basenie Adriatyku. Został wzniesiony w 115 roku n.e. z woli Senatu Rzymskiego na cześć cesarza Trajana, który osobiście sfinansował rozbudowę portu, przekształcając Ankonę w jeden z najważniejszych portów Morza Śródziemnego. Wykonany z błyszczącego greckiego marmuru z wyspy Paros, łuk wciąż zachwyca elegancją proporcji i spektakularnym położeniem bezpośrednio nad morzem. Choć stracił w ciągu wieków brązowe posągi, które go zdobiły, zachował nienaruszoną niezwykłą wartość historyczną i artystyczną. Zatrzymaj się na chwilę, aby podziwiać panoramę: przed tobą rozciąga się nowoczesny port, a za tobą wznosi się profil wzgórza Guasco z katedrą San Ciriaco. To jedno z najczęściej fotografowanych miejsc w Anconie. Kilka kroków dalej napotkasz kolejny ważny zabytek Vanvitelliego: Łuk Clementino.',
+          lat:43.6186, lon:13.5142, next:'Arco Clementino' },
+        { order:6, name:'Arco Clementino', emoji:'🏛️', photo:'arco-clementino.jpg',
+          it:'L\'Arco Clementino rappresenta il passaggio tra la città romana e quella settecentesca. Progettato da Luigi Vanvitelli nel XVIII secolo, fu dedicato a Papa Clemente XII, il pontefice che concesse ad Ancona il prestigioso status di Porto Franco, favorendo un periodo di grande prosperità economica e commerciale. Con la facciata costruita in resistente pietra d\'Istria, mentre la controfacciata è in semplici mattoni d\'argilla, l\'arco presenta linee sobrie ed eleganti tipiche dell\'architettura vanvitelliana e costituiva l\'ingresso monumentale per chi arrivava in città via mare. Passeggiando tra l\'Arco di Traiano e l\'Arco Clementino è facile immaginare l\'intenso traffico di navi mercantili, ambasciatori e viaggiatori che per secoli hanno fatto di Ancona uno dei principali porti dell\'Adriatico. Da qui è possibile scegliere se proseguire verso la suggestiva Lanterna Rossa oppure rientrare verso il centro storico seguendo il percorso principale.',
+          en:'The Arco Clementino represents the passage between the Roman city and the 18th-century city. Designed by Luigi Vanvitelli in the 18th century, it was dedicated to Pope Clement XII, the pontiff who granted Ancona the prestigious status of Free Port, fostering a period of great economic and commercial prosperity. With the facade built in durable Istrian stone, while the inner face is in simple clay bricks, the arch presents sober and elegant lines typical of Vanvitelli architecture and was the monumental entrance for those arriving in the city by sea. Walking between the Arch of Trajan and the Arco Clementino, it is easy to imagine the intense traffic of merchant ships, ambassadors and travellers who for centuries made Ancona one of the main ports of the Adriatic. From here you can choose whether to continue towards the evocative Lanterna Rossa or return to the historic centre following the main route.',
+          de:'Der Arco Clementino markiert den Übergang zwischen der römischen Stadt und der Stadt des 18. Jahrhunderts. Entworfen von Luigi Vanvitelli im 18. Jahrhundert, war er Papst Clemens XII. gewidmet, dem Pontifex, der Ancona den prestigeträchtigen Status eines Freihafens verlieh und so eine Zeit großen wirtschaftlichen und kommerziellen Wohlstands förderte. Mit der Fassade aus widerstandsfähigem istrischem Stein, während die Innenseite aus einfachen Lehmziegeln besteht, zeigt der Bogen schlichte und elegante Linien, die typisch für die Vanvitelli-Architektur sind, und war das monumentale Eingangstor für diejenigen, die auf dem Seeweg in die Stadt kamen. Spaziert man zwischen dem Trajansbogen und dem Arco Clementino, ist es leicht, sich den intensiven Verkehr von Handelsschiffen, Botschaftern und Reisenden vorzustellen, die Ancona über Jahrhunderte zu einem der wichtigsten Häfen der Adria machten. Von hier aus kann man wählen, ob man Richtung eindrucksvolle Lanterna Rossa weitergeht oder zum historischen Zentrum zurückkehrt, der Hauptroute folgend.',
+          pl:'Łuk Clementino reprezentuje przejście między miastem rzymskim a miastem XVIII-wiecznym. Zaprojektowany przez Luigiego Vanvitelliego w XVIII wieku, został poświęcony papieżowi Klemensowi XII, pontyfikowi, który nadał Anconie prestiżowy status wolnego portu, sprzyjając okresowi wielkiego prosperity gospodarczego i handlowego. Fasada wykonana jest z trwałego kamienia istryjskiego, podczas gdy wewnętrzna strona z prostej cegły glinianej, łuk prezentuje stonowane i eleganckie linie typowe dla architektury Vanvitelliego i był monumentalnym wejściem dla tych, którzy przybywali do miasta drogą morską. Spacerując między Łukiem Trajana a Łukiem Clementino, łatwo sobie wyobrazić intensywny ruch statków handlowych, ambasadorów i podróżników, którzy przez wieki uczynili Ankonę jednym z głównych portów Adriatyku. Stąd możesz wybrać, czy kontynuować w stronę sugestywnej Czerwonej Latarni, czy wrócić do historycznego centrum, podążając główną trasą.',
+          lat:43.6188, lon:13.5148, next:'Lanterna Rossa (opzionale)' },
+        { order:'6-bis', name:'Lanterna Rossa', emoji:'🔴', photo:'lanterna-rossa.jpg',
+          it:'Per chi desidera proseguire la passeggiata, la Lanterna Rossa rappresenta una deviazione breve ma altamente consigliata. Attraversando sulla destra il varco nelle mura si raggiunge la Torre dei Piloti del porto; poco oltre, un passaggio quasi nascosto conduce al lungo molo che termina con l\'inconfondibile faro rosso, da oltre un secolo punto di riferimento per le imbarcazioni in ingresso. Salendo sulla parte superiore del molo si apre uno dei panorami più spettacolari di Ancona: da un lato il profilo della città dominato dal Duomo, dall\'altro il porto commerciale, il mare Adriatico e, nelle giornate più limpide, un orizzonte che sembra non avere fine. È un luogo ancora poco conosciuto dal turismo di massa e proprio per questo conserva un\'atmosfera autentica e rilassata, ideale per scattare fotografie o semplicemente fermarsi ad ascoltare il rumore del mare prima di riprendere il percorso verso il centro storico.',
+          en:'For those who wish to continue the walk, the Lanterna Rossa represents a short but highly recommended detour. Crossing the gap in the walls on the right, you reach the Port Pilots\' Tower; a little further on, an almost hidden passage leads to the long pier that ends with the unmistakable red lighthouse, a landmark for incoming vessels for over a century. Climbing to the upper part of the pier opens up one of the most spectacular panoramas of Ancona: on one side the profile of the city dominated by the Duomo, on the other the commercial port, the Adriatic Sea and, on the clearest days, a horizon that seems to have no end. It is a place still little known to mass tourism and for this very reason retains an authentic and relaxed atmosphere, ideal for taking photographs or simply stopping to listen to the sound of the sea before resuming the route towards the historic centre.',
+          de:'Für diejenigen, die den Spaziergang fortsetzen möchten, stellt die Lanterna Rossa eine kurze, aber höchst empfohlene Abzweigung dar. Überquert man die Lücke in den Mauern auf der rechten Seite, erreicht man den Turm der Hafenlotsen; etwas weiter führt ein fast versteckter Durchgang zum langen Molenende mit dem unverwechselbaren roten Leuchtturm, seit über einem Jahrhundert ein Orientierungspunkt für einlaufende Schiffe. Steigt man auf den oberen Teil der Mole, eröffnet sich eines der spektakulärsten Panoramen von Ancona: auf der einen Seite das Stadtbild, dominiert von der Kathedrale, auf der anderen der Handelshafen, die Adria und, an den klarsten Tagen, ein Horizont, der kein Ende zu haben scheint. Es ist ein Ort, der dem Massentourismus noch weitgehend unbekannt ist und gerade deshalb eine authentische und entspannte Atmosphäre bewahrt, ideal zum Fotografieren oder einfach, um dem Rauschen des Meeres zu lauschen, bevor man den Weg zurück zum historischen Zentrum fortsetzt.',
+          pl:'Dla tych, którzy chcą kontynuować spacer, Czerwona Latarnia stanowi krótkie, ale bardzo polecane zboczenie z trasy. Przekraczając szczelinę w murach po prawej stronie, docierasz do Wieży Pilotów Portu; nieco dalej niemal ukryte przejście prowadzi do długiego mola, które kończy się nie do pomylenia czerwoną latarnią morską, punktem orientacyjnym dla przybywających statków od ponad stulecia. Wspinając się na górną część mola, roztacza się jeden z najbardziej spektakularnych widoków Ancony: z jednej strony profil miasta zdominowany przez katedrę, z drugiej port handlowy, Morze Adriatyckie i, w najjaśniejsze dni, horyzont, który wydaje się nie mieć końca. To miejsce wciąż mało znane masowej turystyce i właśnie dlatego zachowuje autentyczną i relaksującą atmosferę, idealną do robienia zdjęć lub po prostu zatrzymania się, by posłuchać szumu morza przed wznowieniem trasy w stronę historycznego centrum.',
+          lat:43.6192, lon:13.5155, next:'Resti del Porto Romano' },
+        { order:7, name:'Resti del Porto Romano (Porto Traianeo)', emoji:'🏛️', photo:'porto-romano.jpg',
+          it:'Percorrendo il lungomare in direzione del centro storico si incontrano i suggestivi resti dell\'antico Porto Romano, testimonianza dell\'importanza strategica che Ancona rivestiva già oltre duemila anni fa. La passerella che l\'attraversa consente di osservare dall\'alto le strutture portuali risalenti all\'epoca romana, quando il porto rappresentava uno dei principali punti di collegamento tra la penisola italiana e le province orientali dell\'Impero. Proprio qui attraccavano navi cariche di merci provenienti dalla Grecia, dall\'Asia Minore e dai principali scali del Mediterraneo. Sulla destra si trova la medievale Casa del Capitano del Porto, uno degli edifici più antichi dell\'area portuale, che ricorda come questa zona sia rimasta il cuore economico della città per secoli. Proseguendo verso Largo Dante Alighieri, si scopre sulla sinistra il maestoso Palazzo degli Anziani, simbolo dell\'antica autonomia politica della Repubblica di Ancona.',
+          en:'Walking along the seafront towards the historic centre, you encounter the evocative remains of the ancient Roman Port, testimony to the strategic importance that Ancona held over two thousand years ago. The walkway that crosses it allows you to observe from above the port structures dating back to Roman times, when the port was one of the main connection points between the Italian peninsula and the eastern provinces of the Empire. Right here, ships loaded with goods from Greece, Asia Minor and the main Mediterranean ports docked. On the right is the medieval Casa del Capitano del Porto, one of the oldest buildings in the port area, a reminder of how this zone remained the economic heart of the city for centuries. Continuing towards Largo Dante Alighieri, on the left stands the majestic Palazzo degli Anziani, symbol of the ancient political autonomy of the Republic of Ancona.',
+          de:'Entlang der Uferpromenade Richtung historisches Zentrum begegnet man den eindrucksvollen Überresten des antiken römischen Hafens, Zeugnis der strategischen Bedeutung, die Ancona bereits vor über zweitausend Jahren innehatte. Der Steg, der ihn durchquert, ermöglicht es, die Hafenanlagen aus römischer Zeit von oben zu betrachten, als der Hafen einer der wichtigsten Verbindungspunkte zwischen der italienischen Halbinsel und den östlichen Provinzen des Reiches war. Genau hier legten Schiffe an, beladen mit Waren aus Griechenland, Kleinasien und den wichtigsten Häfen des Mittelmeers. Rechts befindet sich das mittelalterliche Casa del Capitano del Porto, eines der ältesten Gebäude des Hafengebiets, das daran erinnert, wie diese Zone über Jahrhunderte das wirtschaftliche Herz der Stadt blieb. Weiter Richtung Largo Dante Alighieri erhebt sich links das majestätische Palazzo degli Anziani, Symbol der alten politischen Autonomie der Republik Ancona.',
+          pl:'Spacerując nadmorską promenadą w stronę historycznego centrum, napotykasz sugestywne pozostałości starożytnego portu rzymskiego, świadczące o strategicznym znaczeniu, jakie Ancona odgrywała ponad dwa tysiące lat temu. Kładka, która go przecina, pozwala obserwować z góry struktury portowe pochodzące z czasów rzymskich, gdy port był jednym z głównych punktów połączenia między Półwyspem Apenińskim a wschodnimi prowincjami Imperium. To właśnie tutaj cumowały statki załadowane towarami z Grecji, Azji Mniejszej i głównych portów Morza Śródziemnego. Po prawej stronie znajduje się średniowieczny Casa del Capitano del Porto, jeden z najstarszych budynków w okolicy portowej, przypominający o tym, jak ta strefa pozostawała przez wieki ekonomicznym sercem miasta. Kontynuując w stronę Largo Dante Alighieri, po lewej stronie odkrywasz majestatyczny Palazzo degli Anziani, symbol dawnej autonomii politycznej Republiki Ancony.',
+          lat:43.6195, lon:13.5168, next:'Palazzo degli Anziani' },
+        { order:8, name:'Palazzo degli Anziani (Ascensore)', emoji:'🏛️', photo:'palazzo-anziani.jpg',
+          it:'Il Palazzo degli Anziani è uno dei luoghi più rappresentativi della storia civile di Ancona. Da oltre otto secoli domina il porto dall\'alto del colle e continua ancora oggi a ospitare il Consiglio Comunale della città. Le sue origini sono avvolte nella storia e nella leggenda: una tradizione attribuisce la prima costruzione a Galla Placidia nel V secolo, mentre l\'edificio attuale venne realizzato nel 1270 su progetto di Margaritone d\'Arezzo e successivamente rinnovato nel Cinquecento dall\'architetto Pellegrino Tibaldi. Qui si riuniva il Consiglio degli Anziani, l\'organo che governava la Repubblica di Ancona durante il periodo della sua indipendenza. Le decisioni che riguardavano commerci, alleanze e difesa della città venivano prese proprio in queste sale. Sulla sinistra si trova l\'ascensore pubblico che conduce alla sovrastante Piazza Stracca e offre anche accesso a servizi igienici. La piazza si può raggiungere anche salendo lungo i suggestivi percorsi che si snodano sui due fianchi del palazzo. Una volta raggiunta la parte alta della città, si gode di una splendida vista sui tetti del centro storico e sul porto. Proseguendo verso il Duomo ci si inoltra nel cuore monumentale di Ancona, tra antichi palazzi nobiliari e scorci che raccontano secoli di storia.',
+          en:'The Palazzo degli Anziani is one of the most representative places in the civic history of Ancona. For over eight centuries it has dominated the port from the top of the hill and still today houses the City Council. Its origins are shrouded in history and legend: one tradition attributes the first construction to Galla Placidia in the 5th century, while the current building was built in 1270 to a design by Margaritone d\'Arezzo and later renovated in the 16th century by the architect Pellegrino Tibaldi. Here the Council of Elders met, the body that governed the Republic of Ancona during its period of independence. Decisions concerning trade, alliances and the defence of the city were taken right in these rooms. On the left is the public lift that leads to the upper Piazza Stracca and also provides access to toilet facilities. The square can also be reached by climbing the evocative paths that wind up the two sides of the palace. Once you reach the upper part of the city, you can enjoy a splendid view over the rooftops of the historic centre and the port. Continuing towards the Duomo, you enter the monumental heart of Ancona, among ancient noble palaces and glimpses that tell centuries of history.',
+          de:'Der Palazzo degli Anziani ist einer der bedeutendsten Orte der bürgerlichen Geschichte von Ancona. Seit über acht Jahrhunderten überragt er den Hafen vom Gipfel des Hügels aus und beherbergt noch heute den Stadtrat. Seine Ursprünge sind in Geschichte und Legende gehüllt: Eine Tradition schreibt den ersten Bau der Galla Placidia im 5. Jahrhundert zu, während das heutige Gebäude 1270 nach einem Entwurf von Margaritone d\'Arezzo errichtet und im 16. Jahrhundert vom Architekten Pellegrino Tibaldi erneuert wurde. Hier versammelte sich der Rat der Ältesten, das Gremium, das die Republik Ancona während ihrer Unabhängigkeit regierte. Entscheidungen über Handel, Bündnisse und Verteidigung der Stadt wurden in diesen Räumen getroffen. Links befindet sich der öffentliche Aufzug, der zur oberen Piazza Stracca führt und auch Zugang zu sanitären Einrichtungen bietet. Der Platz ist auch über die malerischen Wege erreichbar, die sich an den beiden Seiten des Palastes hinaufwinden. Hat man den oberen Teil der Stadt erreicht, genießt man einen herrlichen Blick über die Dächer der Altstadt und den Hafen. Weiter Richtung Duomo gelangt man in das monumentale Herz von Ancona, zwischen alten Adelsresidenzen und Ausblicken, die Jahrhunderte Geschichte erzählen.',
+          pl:'Palazzo degli Anziani to jedno z najbardziej reprezentatywnych miejsc w historii obywatelskiej Ancony. Od ponad ośmiu stuleci dominuje nad portem z wysokości wzgórza i wciąż dziś mieści Radę Miejską. Jego początki są owiane historią i legendą: jedna tradycja przypisuje pierwszą budowlę Galli Placydii w V wieku, podczas gdy obecny budynek został wzniesiony w 1270 roku według projektu Margaritone d\'Arezzo, a następnie odnowiony w XVI wieku przez architekta Pellegrino Tibaldiego. Tutaj zbierała się Rada Starszych, organ rządzący Republiką Ancony w okresie jej niepodległości. Decyzje dotyczące handlu, sojuszy i obrony miasta były podejmowane właśnie w tych salach. Po lewej stronie znajduje się publiczna winda, która prowadzi do górnej Piazza Stracca i zapewnia również dostęp do toalet. Na plac można również dostać się wspinając się malowniczymi ścieżkami wijącymi się po obu stronach pałacu. Po dotarciu do górnej części miasta można podziwiać wspaniały widok na dachy historycznego centrum i port. Kontynuując w stronę katedry, wkraczasz w monumentalne serce Ancony, wśród starożytnych pałaców szlacheckich i widoków, które opowiadają wieki historii.',
+          lat:43.6205, lon:13.5178, next:'Museo Archeologico Nazionale' },
+        { order:9, name:'Museo Archeologico Nazionale delle Marche', emoji:'🏺', photo:'museo-archeologico.jpg',
+          it:'Ospitato nello splendido Palazzo Ferretti, il Museo Archeologico Nazionale delle Marche custodisce una delle collezioni più importanti dell\'Italia centrale. Le sale affrescate da Pellegrino Tibaldi fanno da cornice a un viaggio che attraversa migliaia di anni di storia: dai primi insediamenti preistorici fino all\'età romana. Tra i reperti più celebri spiccano i ricchi corredi funerari dei Piceni, l\'antico popolo che abitava queste terre prima della conquista romana. La visita permette di comprendere come il territorio marchigiano sia stato per secoli un crocevia di culture, commerci e civiltà provenienti dall\'intero bacino mediterraneo. Anche chi non dispone del tempo necessario per visitare il museo può soffermarsi ad ammirare il palazzo, uno dei più eleganti edifici rinascimentali della città. Poco oltre si incontra il medievale Palazzo del Senato, mentre una suggestiva scalinata conduce verso il punto più alto e simbolico di Ancona: la Cattedrale di San Ciriaco.',
+          en:'Housed in the splendid Palazzo Ferretti, the National Archaeological Museum of the Marche preserves one of the most important collections in central Italy. The frescoed rooms by Pellegrino Tibaldi frame a journey that spans thousands of years of history: from the first prehistoric settlements to the Roman age. Among the most famous finds are the rich funerary outfits of the Piceni, the ancient people who inhabited these lands before the Roman conquest. The visit allows you to understand how the Marche territory has been for centuries a crossroads of cultures, trade and civilisations from the entire Mediterranean basin. Even those who do not have time to visit the museum can stop to admire the palace, one of the most elegant Renaissance buildings in the city. A little further on stands the medieval Palazzo del Senato, while an evocative staircase leads to the highest and most symbolic point of Ancona: the Cathedral of San Ciriaco.',
+          de:'Untergebracht im prächtigen Palazzo Ferretti bewahrt das Nationalarchäologische Museum der Marken eine der wichtigsten Sammlungen Mittelitaliens. Die von Pellegrino Tibaldi bemalten Säle rahmen eine Reise durch Jahrtausende der Geschichte: von den ersten prähistorischen Siedlungen bis zur römischen Ära. Zu den berühmtesten Funden gehören die reichen Grabausstattungen der Picener, des alten Volkes, das diese Länder vor der römischen Eroberung bewohnte. Der Besuch ermöglicht es zu verstehen, wie das Gebiet der Marken über Jahrhunderte hinweg ein Kreuzweg von Kulturen, Handel und Zivilisationen aus dem gesamten Mittelmeerraum war. Auch wer nicht die Zeit hat, das Museum zu besuchen, kann innehalten, um den Palazzo zu bewundern, eines der elegantesten Renaissancegebäude der Stadt. Etwas weiter steht der mittelalterliche Palazzo del Senato, während eine eindrucksvolle Treppe zum höchsten und symbolträchtigsten Punkt von Ancona führt: der Kathedrale San Ciriaco.',
+          pl:'Mieszczące się w wspaniałym Palazzo Ferretti, Narodowe Muzeum Archeologiczne regionu Marche zachowuje jedną z najważniejszych kolekcji w środkowych Włoszech. Pokoje ozdobione freskami autorstwa Pellegrino Tibaldiego stanowią ramę dla podróży obejmującej tysiące lat historii: od pierwszych osad prehistorycznych po epokę rzymską. Wśród najsłynniejszych znalezisk wyróżniają się bogate wyposażenie grobowe Picenów, starożytnego ludu, który zamieszkiwał te ziemie przed podbojem rzymskim. Wizyta pozwala zrozumieć, jak terytorium Marche przez wieki było skrzyżowaniem kultur, handlu i cywilizacji z całego basenu Morza Śródziemnego. Nawet ci, którzy nie mają czasu na zwiedzenie muzeum, mogą zatrzymać się, aby podziwiać pałac, jeden z najbardziej eleganckich budynków renesansowych w mieście. Nieco dalej stoi średniowieczny Palazzo del Senato, podczas gdy sugestywna klatka schodowa prowadzi do najwyższego i najbardziej symbolicznego punktu Ancony: katedry San Ciriaco.',
+          lat:43.6210, lon:13.5185, next:'Cattedrale di San Ciriaco' },
+        { order:10, name:'Cattedrale di San Ciriaco', emoji:'⛪', photo:'duomo-san-ciriaco.jpg',
+          it:'La Cattedrale di San Ciriaco è il simbolo assoluto di Ancona e il luogo che meglio rappresenta l\'anima della città. Sorge sulla sommità del Colle Guasco, in una posizione straordinaria che domina il porto, il centro storico e l\'intero tratto di costa adriatica. L\'edificio attuale è il risultato di secoli di storia. Prima ancora della cattedrale, qui sorgeva un tempio dedicato a Venere Euplea, protettrice della navigazione e dei marinai. Alcuni resti delle antiche fondazioni sono ancora oggi visibili. Nel VI secolo venne costruita una basilica paleocristiana che, nell\'anno 1000, divenne cattedrale con l\'arrivo delle reliquie di San Ciriaco. La chiesa colpisce per la sua particolare fusione di elementi romanici, bizantini e gotici, che la rendono unica nel panorama italiano. Il portale decorato, la cupola e l\'atmosfera raccolta degli interni raccontano oltre mille anni di storia religiosa e civile. All\'esterno vi attende uno dei panorami più spettacolari delle Marche. Nelle giornate limpide lo sguardo abbraccia il porto, il Monte Conero e l\'intera baia di Ancona, offrendo una vista che da sola vale la salita. Sulla sinistra della facciata si trova il Museo Diocesano, mentre dall\'altra parte si può scendere verso i resti dell\'antico Anfiteatro Romano.',
+          en:'The Cathedral of San Ciriaco is the absolute symbol of Ancona and the place that best represents the soul of the city. It stands on the summit of Colle Guasco, in an extraordinary position dominating the port, the historic centre and the entire stretch of the Adriatic coast. The present building is the result of centuries of history. Even before the cathedral, a temple dedicated to Venus Euplea, protector of navigation and sailors, stood here. Some remains of the ancient foundations are still visible today. In the 6th century a Paleo-Christian basilica was built, which in the year 1000 became a cathedral with the arrival of the relics of San Ciriaco. The church strikes for its particular fusion of Romanesque, Byzantine and Gothic elements, which make it unique in the Italian panorama. The decorated portal, the dome and the intimate atmosphere of the interiors tell over a thousand years of religious and civil history. Outside, one of the most spectacular panoramas of the Marche awaits you. On clear days the gaze embraces the port, Monte Conero and the entire bay of Ancona, offering a view that alone is worth the climb. On the left of the facade is the Diocesan Museum, while on the other side you can descend towards the remains of the ancient Roman Amphitheatre.',
+          de:'Die Kathedrale San Ciriaco ist das absolute Symbol von Ancona und der Ort, der die Seele der Stadt am besten repräsentiert. Sie steht auf dem Gipfel des Colle Guasco in einer außergewöhnlichen Lage, die den Hafen, das historische Zentrum und die gesamte Adriaküste überragt. Das heutige Gebäude ist das Ergebnis von Jahrhunderten der Geschichte. Noch vor der Kathedrale stand hier ein Tempel der Venus Euplea, Schutzgöttin der Seefahrt und der Seeleute. Einige Überreste der alten Fundamente sind noch heute sichtbar. Im 6. Jahrhundert wurde eine frühchristliche Basilika erbaut, die im Jahr 1000 mit der Ankunft der Reliquien des Heiligen Ciriaco zur Kathedrale wurde. Die Kirche beeindruckt durch ihre besondere Verschmelzung von romanischen, byzantinischen und gotischen Elementen, die sie im italienischen Panorama einzigartig machen. Das verzierte Portal, die Kuppel und die intime Atmosphäre des Inneren erzählen von über tausend Jahren religiöser und bürgerlicher Geschichte. Draußen erwartet Sie eines der spektakulärsten Panoramen der Marken. An klaren Tagen umfasst der Blick den Hafen, den Monte Conero und die gesamte Bucht von Ancona und bietet einen Ausblick, der allein den Aufstieg wert ist. Links der Fassade befindet sich das Diözesanmuseum, während man auf der anderen Seite zu den Überresten des antiken römischen Amphitheaters hinabsteigen kann.',
+          pl:'Katedra San Ciriaco to absolutny symbol Ancony i miejsce, które najlepiej reprezentuje duszę miasta. Stoi na szczycie wzgórza Guasco, w nadzwyczajnym położeniu dominującym nad portem, historycznym centrum i całym odcinkiem wybrzeża adriatyckiego. Obecny budynek jest wynikiem wieków historii. Jeszcze przed katedrą stał tu świątynia poświęcona Wenus Euplei, opiekunce żeglugi i żeglarzy. Niektóre pozostałości starożytnych fundamentów są wciąż widoczne. W VI wieku zbudowano bazylikę paleochrześcijańską, która w roku 1000 stała się katedrą wraz z przybyciem relikwii świętego Cyriaka. Kościół zachwyca swoim szczególnym połączeniem elementów romańskich, bizantyńskich i gotyckich, które czynią go wyjątkowym w włoskiej panoramie. Zdobiony portal, kopuła i intymna atmosfera wnętrz opowiadają o ponad tysiącu lat historii religijnej i obywatelskiej. Na zewnątrz czeka na ciebie jeden z najbardziej spektakularnych widoków regionu Marche. W pogodne dni wzrok obejmuje port, Monte Conero i całą zatokę Ancony, oferując widok, który sam w sobie jest wart wspinaczki. Po lewej stronie fasady znajduje się Muzeum Diecezjalne, podczas gdy po drugiej stronie można zejść w dół w stronę ruin starożytnego rzymskiego amfiteatru.',
+          lat:43.6215, lon:13.5195, next:'Anfiteatro Romano' },
+        { order:11, name:'Anfiteatro Romano', emoji:'🏛️', photo:'anfiteatro-romano.jpg',
+          it:'Pochi visitatori immaginano che sotto le strade e gli edifici del centro storico si nasconda uno dei più importanti siti archeologici della città. L\'Anfiteatro Romano, costruito a picco sul mare tra il I e il II secolo d.C., poteva ospitare migliaia di spettatori ed era il principale luogo dedicato agli spettacoli pubblici dell\'antica Ancona. Qui si svolgevano rappresentazioni teatrali, eventi pubblici e celebrazioni che coinvolgevano l\'intera comunità cittadina. Nel corso dei secoli l\'anfiteatro venne progressivamente inglobato dalle costruzioni successive, fino a scomparire quasi completamente alla vista. In quell\'area in epoca recente sorgeva il carcere della città distrutto da un forte terremoto nel 1972. I lavori di rimozione delle macerie hanno fatto riemergere i resti dell\'antico anfiteatro romano e i successivi scavi archeologici hanno riportato alla luce parte delle gradinate e delle strutture originarie, permettendo di comprendere le dimensioni e l\'importanza di questo complesso monumentale. Passeggiando tra queste rovine è facile immaginare la vita della città romana e il ruolo centrale che Ancona ricopriva lungo le rotte dell\'Adriatico. Da qui il percorso prosegue verso altri punti panoramici e monumentali che raccontano l\'evoluzione della città attraverso i secoli.',
+          en:'Few visitors imagine that beneath the streets and buildings of the historic centre lies one of the city\'s most important archaeological sites. The Roman Amphitheatre, built on the seafront between the 1st and 2nd centuries AD, could hold thousands of spectators and was the main venue for public shows in ancient Ancona. Theatrical performances, public events and celebrations involving the entire city community took place here. Over the centuries the amphitheatre was gradually absorbed by subsequent constructions, until it almost completely disappeared from view. In that area, in recent times, stood the city prison destroyed by a strong earthquake in 1972. The debris removal work brought the remains of the ancient Roman amphitheatre back to light and subsequent archaeological excavations revealed part of the stands and original structures, allowing us to understand the size and importance of this monumental complex. Walking among these ruins, it is easy to imagine the life of the Roman city and the central role that Ancona played along the Adriatic routes. From here the route continues towards other panoramic and monumental points that tell the evolution of the city through the centuries.',
+          de:'Wenige Besucher ahnen, dass unter den Straßen und Gebäuden des historischen Zentrums einer der wichtigsten archäologischen Stätten der Stadt verborgen liegt. Das römische Amphitheater, zwischen dem 1. und 2. Jahrhundert n. Chr. direkt am Meer gebaut, konnte Tausende von Zuschauern aufnehmen und war der Hauptort für öffentliche Schauspiele im antiken Ancona. Hier fanden Theateraufführungen, öffentliche Veranstaltungen und Feierlichkeiten statt, an denen die gesamte Stadtgemeinschaft teilnahm. Im Laufe der Jahrhunderte wurde das Amphitheater nach und nach von späteren Bauten überbaut, bis es fast vollständig aus dem Blick verschwand. Auf diesem Gelände stand in jüngerer Zeit das Stadtgefängnis, das bei einem starken Erdbeben 1972 zerstört wurde. Die Trümmerbeseitigung brachte die Überreste des antiken römischen Amphitheaters wieder zum Vorschein, und nachfolgende archäologische Ausgrabungen legten Teile der Tribünen und der ursprünglichen Strukturen frei, sodass die Ausmaße und Bedeutung dieses monumentalen Komplexes verstanden werden können. Spaziert man zwischen diesen Ruinen, ist es leicht, sich das Leben der römischen Stadt und die zentrale Rolle vorzustellen, die Ancona entlang der adriatischen Routen spielte. Von hier aus führt die Route weiter zu anderen Aussichts- und Monumentalpunkten, die die Entwicklung der Stadt durch die Jahrhunderte erzählen.',
+          pl:'Niewielu zwiedzających wyobraża sobie, że pod ulicami i budynkami historycznego centrum ukryty jest jeden z najważniejszych stanowisk archeologicznych miasta. Rzymski amfiteatr, zbudowany na klifie nad morzem między I a II wiekiem n.e., mógł pomieścić tysiące widzów i był głównym miejscem widowisk publicznych w starożytnej Anconie. Odbywały się tu przedstawienia teatralne, wydarzenia publiczne i uroczystości, w których uczestniczyła cała społeczność miejska. W ciągu wieków amfiteatr był stopniowo pochłaniany przez kolejne budowle, aż niemal całkowicie zniknął z oczu. Na tym terenie w niedawnych czasach stało więzienie miejskie, zniszczone przez silne trzęsienie ziemi w 1972 roku. Prace związane z usuwaniem gruzów przywróciły światło dzienne pozostałościom starożytnego rzymskiego amfiteatru, a kolejne wykopaliska archeologiczne odsłoniły część trybun i pierwotnych struktur, pozwalając zrozumieć rozmiary i znaczenie tego monumentalnego kompleksu. Spacerując pośród tych ruin, łatwo sobie wyobrazić życie rzymskiego miasta i centralną rolę, jaką Ancona odgrywała na szlakach adriatyckich. Stąd trasa prowadzi dalej w stronę innych punktów panoramicznych i zabytkowych, opowiadających o ewolucji miasta przez wieki.',
+          lat:43.6220, lon:13.5205, next:'Piazza del Plebiscito' },
+        { order:12, name:'Piazza del Plebiscito (Piazza del Papa)', emoji:'🏛️', photo:'piazza-plebiscito.jpg',
+          it:'Conosciuta da tutti gli anconetani come Piazza del Papa, è uno degli angoli più eleganti e vivaci del centro storico. Il suo nome popolare deriva dalla monumentale statua di Papa Clemente XII, collocata al centro della piazza per celebrare il pontefice che concesse ad Ancona il prestigioso status di Porto Franco. Circondata da palazzi storici, caffè e ristoranti, la piazza è da sempre un luogo d\'incontro, dove la vita cittadina scorre con calma tra tavolini all\'aperto ed eventi culturali. Nelle sere d\'estate diventa uno dei luoghi più frequentati del centro. Vale la pena soffermarsi ad osservare l\'armonia degli edifici che la circondano e lasciarsi avvolgere dall\'atmosfera autentica della città. È uno dei posti migliori per concedersi una pausa durante la visita. Da qui, in pochi minuti, si raggiungono Corso Garibaldi e le principali vie dello shopping cittadino.',
+          en:'Known to all Anconetani as Piazza del Papa, it is one of the most elegant and lively corners of the historic centre. Its popular name derives from the monumental statue of Pope Clement XII, placed in the centre of the square to celebrate the pontiff who granted Ancona the prestigious status of Free Port. Surrounded by historic palaces, cafés and restaurants, the square has always been a meeting place, where city life flows calmly between outdoor tables and cultural events. On summer evenings it becomes one of the most frequented places in the centre. It is worth stopping to observe the harmony of the buildings that surround it and letting yourself be enveloped by the authentic atmosphere of the city. It is one of the best places to take a break during your visit. From here, in a few minutes, you can reach Corso Garibaldi and the main shopping streets of the city.',
+          de:'Allen Anconetanern als Piazza del Papa bekannt, ist sie einer der elegantesten und lebhaftesten Winkel der Altstadt. Ihr populärer Name leitet sich von der monumentalen Statue von Papst Clemens XII. ab, die in der Mitte des Platzes aufgestellt wurde, um den Pontifex zu feiern, der Ancona den prestigeträchtigen Status eines Freihafens verlieh. Umgeben von historischen Palästen, Cafés und Restaurants ist der Platz seit jeher ein Treffpunkt, an dem das Stadtleben ruhig zwischen Tischen im Freien und kulturellen Veranstaltungen fließt. An Sommerabenden wird er zu einem der meistbesuchten Orte im Zentrum. Es lohnt sich, innezuhalten, um die Harmonie der umgebenden Gebäude zu beobachten und sich von der authentischen Atmosphäre der Stadt einhüllen zu lassen. Es ist einer der besten Orte, um sich während des Besuchs eine Pause zu gönnen. Von hier aus erreicht man in wenigen Minuten die Corso Garibaldi und die wichtigsten Einkaufsstraßen der Stadt.',
+          pl:'Znana wszystkim Anconetanom jako Piazza del Papa, to jeden z najbardziej eleganckich i tętniących życiem zakątków historycznego centrum. Jej popularna nazwa pochodzi od monumentalnego posągu papieża Klemensa XII, umieszczonego w centrum placu na cześć pontyfika, który nadał Anconie prestiżowy status wolnego portu. Otoczona zabytkowymi pałacami, kawiarniami i restauracjami, piazza od zawsze była miejscem spotkań, gdzie życie miejskie płynie spokojnie między stolikami na zewnątrz a wydarzeniami kulturalnymi. Letnimi wieczorami staje się jednym z najczęściej odwiedzanych miejsc w centrum. Warto zatrzymać się, aby przyjrzeć się harmonii otaczających budynków i dać się otoczyć autentycznej atmosferze miasta. To jedno z najlepszych miejsc na przerwę podczas zwiedzania. Stąd w kilka minut można dotrzeć do Corso Garibaldi i głównych ulic handlowych miasta.',
+          lat:43.6225, lon:13.5215, next:'Corso Garibaldi' },
+        { order:13, name:'Corso Garibaldi', emoji:'🚶', photo:'',
+          it:'Corso Garibaldi è il salotto di Ancona. Questa ampia strada pedonale collega Piazza Cavour al porto ed è percorsa ogni giorno da residenti, studenti e visitatori. Passeggiando tra eleganti palazzi ottocenteschi si incontrano boutique, librerie, negozi storici, caffetterie e gelaterie che rendono il corso il luogo ideale per vivere il ritmo quotidiano della città. Lungo il percorso si percepisce il carattere autentico di Ancona: una città che non vive solo di turismo, ma conserva una forte identità locale fatta di commercio, incontri e tradizioni. È la passeggiata perfetta per chi desidera osservare la vita cittadina, fare acquisti o semplicemente concedersi un buon caffè prima di proseguire la visita. Dalle 18 alle 20 è la tradizionale ora dello "struscio", cioè percorrere ripetutamente su e giù per il corso, chiamato anche fare le vasche, per chiacchierare e guardare chi passa.',
+          en:'Corso Garibaldi is the drawing room of Ancona. This wide pedestrian street connects Piazza Cavour to the port and is walked every day by residents, students and visitors. Strolling among elegant 19th-century palaces, you encounter boutiques, bookshops, historic shops, cafés and ice cream parlours that make the corso the ideal place to experience the daily rhythm of the city. Along the way you perceive the authentic character of Ancona: a city that does not live on tourism alone, but maintains a strong local identity made of commerce, encounters and traditions. It is the perfect walk for those who want to observe city life, do some shopping or simply enjoy a good coffee before continuing the visit. From 6 to 8 pm is the traditional time of the "struscio", that is, walking repeatedly up and down the corso, also called "fare le vasche", to chat and watch people go by.',
+          de:'Die Corso Garibaldi ist das Wohnzimmer von Ancona. Diese breite Fußgängerstraße verbindet die Piazza Cavour mit dem Hafen und wird täglich von Einwohnern, Studenten und Besuchern begangen. Beim Spaziergang zwischen eleganten Palästen aus dem 19. Jahrhundert begegnet man Boutiquen, Buchhandlungen, historischen Geschäften, Cafés und Eisdielen, die den Corso zum idealen Ort machen, um den täglichen Rhythmus der Stadt zu erleben. Unterwegs spürt man den authentischen Charakter von Ancona: eine Stadt, die nicht allein vom Tourismus lebt, sondern eine starke lokale Identität aus Handel, Begegnungen und Traditionen bewahrt. Es ist der perfekte Spaziergang für diejenigen, die das Stadtleben beobachten, einkaufen oder einfach einen guten Kaffee genießen möchten, bevor sie den Besuch fortsetzen. Von 18 bis 20 Uhr ist die traditionelle Zeit des "Struscio", also des wiederholten Auf- und Abgehens auf dem Corso, auch "fare le vasche" genannt, um zu plaudern und den Leuten zuzusehen.',
+          pl:'Corso Garibaldi to salon Ancony. Ta szeroka ulica dla pieszych łączy Piazza Cavour z portem i codziennie przemierzają ją mieszkańcy, studenci i zwiedzający. Spacerując wśród eleganckich pałaców z XIX wieku, napotykasz butiki, księgarnie, zabytkowe sklepy, kawiarnie i lodziarnie, które czynią Corso idealnym miejscem do przeżywania codziennego rytmu miasta. W trakcie spaceru wyczuwa się autentyczny charakter Ancony: miasta, które nie żyje tylko z turystyki, ale zachowuje silną tożsamość lokalną zbudowaną na handlu, spotkaniach i tradycjach. To idealny spacer dla tych, którzy chcą obserwować życie miejskie, zrobić zakupy lub po prostu napić się dobrej kawy przed kontynuowaniem zwiedzania. Od 18 do 20 to tradycyjna pora "struscio", czyli wielokrotnego przechodzenia w górę i w dół Corso, zwanego też "fare le vasche", by porozmawiać i przyglądać się przechodniom.',
+          lat:43.6230, lon:13.5220, next:'Piazza Cavour' },
+        { order:14, name:'Piazza Cavour', emoji:'🌳', photo:'',
+          it:'Realizzata nella seconda metà dell\'Ottocento, Piazza Cavour rappresenta il principale spazio monumentale della città moderna. Ampia, elegante e ricca di aree verdi, costituisce il collegamento naturale tra il centro storico e il quartiere del Passetto. Al centro si erge il monumento dedicato a Camillo Benso Conte di Cavour, protagonista del processo di unificazione italiana, circondato da giardini curati che nelle belle giornate diventano punto di ritrovo per famiglie, studenti e residenti. Le sue prospettive alberate e l\'ampiezza degli spazi la rendono una delle piazze più scenografiche di Ancona, ideale per una passeggiata rilassante in ogni stagione. Da qui parte Viale della Vittoria, che conduce fino al mare e a uno dei luoghi più iconici della città: il Passetto.',
+          en:'Built in the second half of the 19th century, Piazza Cavour represents the main monumental space of the modern city. Wide, elegant and rich in green areas, it is the natural link between the historic centre and the Passetto district. In the centre stands the monument dedicated to Camillo Benso Count of Cavour, protagonist of the Italian unification process, surrounded by well-kept gardens that on fine days become a meeting point for families, students and residents. Its tree-lined perspectives and the spaciousness of the spaces make it one of the most scenic squares in Ancona, ideal for a relaxing walk in any season. From here starts Viale della Vittoria, which leads to the sea and to one of the city\'s most iconic places: the Passetto.',
+          de:'In der zweiten Hälfte des 19. Jahrhunderts errichtet, repräsentiert die Piazza Cavour den wichtigsten monumentalen Raum der modernen Stadt. Weitläufig, elegant und reich an Grünflächen, stellt sie die natürliche Verbindung zwischen der Altstadt und dem Viertel Passetto dar. In der Mitte erhebt sich das Denkmal für Camillo Benso Graf von Cavour, Protagonist des Prozesses der italienischen Einigung, umgeben von gepflegten Gärten, die an schönen Tagen zu einem Treffpunkt für Familien, Studenten und Einwohner werden. Ihre baumbestandenen Perspektiven und die Weite des Raumes machen sie zu einem der malerischsten Plätze von Ancona, ideal für einen entspannenden Spaziergang in jeder Jahreszeit. Von hier aus beginnt die Viale della Vittoria, die zum Meer führt und zu einem der ikonischsten Orte der Stadt: dem Passetto.',
+          pl:'Zbudowana w drugiej połowie XIX wieku, Piazza Cavour reprezentuje główną przestrzeń monumentalną nowoczesnego miasta. Szeroka, elegancka i bogata w zieleń, stanowi naturalne połączenie między historycznym centrum a dzielnicą Passetto. W centrum wznosi się pomnik poświęcony Camillo Benso, hrabiemu Cavour, protagonistowi procesu zjednoczenia Włoch, otoczony zadbanymi ogrodami, które w pogodne dni stają się miejscem spotkań rodzin, studentów i mieszkańców. Jej perspektywy obsadzone drzewami i przestronność czynią ją jednym z najbardziej malowniczych placów w Anconie, idealnym na relaksujący spacer w każdej porze roku. Stąd zaczyna się Viale della Vittoria, które prowadzi do morza i do jednego z najbardziej ikonicznych miejsc miasta: Passetto.',
+          lat:43.6240, lon:13.5230, next:'Viale della Vittoria' },
+        { order:15, name:'Viale della Vittoria', emoji:'🌲', photo:'',
+          it:'Viale della Vittoria è uno dei percorsi più piacevoli di Ancona. Il lungo viale alberato collega Piazza Cavour al Passetto ed è considerato dagli anconetani una delle passeggiate più belle della città. Gli eleganti edifici storici, i giardini e i filari di tigli creano un ambiente tranquillo e ombreggiato, perfetto per raggiungere il mare a piedi in ogni periodo dell\'anno. Durante il tragitto si incontrano caffè, gelaterie e locali dove fermarsi per una pausa, mentre l\'aria marina si fa sempre più intensa avvicinandosi alla costa. Alla fine del viale compare uno dei panorami più spettacolari dell\'Adriatico: la monumentale scalinata del Passetto e la circostante falesia a picco sul mare.',
+          en:'Viale della Vittoria is one of the most pleasant walks in Ancona. The long tree-lined avenue connects Piazza Cavour to the Passetto and is considered by the people of Ancona as one of the most beautiful walks in the city. The elegant historic buildings, gardens and rows of lime trees create a tranquil and shady environment, perfect for reaching the sea on foot at any time of year. Along the way you encounter cafés, ice cream parlours and places to stop for a break, while the sea air becomes increasingly intense as you approach the coast. At the end of the avenue appears one of the most spectacular panoramas of the Adriatic: the monumental staircase of the Passetto and the surrounding cliff plunging into the sea.',
+          de:'Die Viale della Vittoria ist einer der angenehmsten Spaziergänge von Ancona. Die lange baumbestandene Allee verbindet die Piazza Cavour mit dem Passetto und gilt bei den Anconetanern als einer der schönsten Spaziergänge der Stadt. Die eleganten historischen Gebäude, Gärten und Lindenalleen schaffen eine ruhige und schattige Umgebung, perfekt, um zu jeder Jahreszeit zu Fuß zum Meer zu gelangen. Unterwegs begegnet man Cafés, Eisdielen und Lokalen, um sich eine Pause zu gönnen, während die Meeresluft immer intensiver wird, je näher man der Küste kommt. Am Ende der Allee erscheint eines der spektakulärsten Panoramen der Adria: die monumentale Treppe des Passetto und die umgebende Klippe, die steil ins Meer abfällt.',
+          pl:'Viale della Vittoria to jeden z najprzyjemniejszych spacerów w Anconie. Długa aleja obsadzona drzewami łączy Piazza Cavour z Passetto i jest uważana przez mieszkańców Ancony za jeden z najpiękniejszych spacerów w mieście. Eleganckie zabytkowe budynki, ogrody i rzędy lip tworzą spokojne i cieniste otoczenie, idealne do dotarcia na plażę pieszo o każdej porze roku. W trakcie trasy napotykasz kawiarnie, lodziarnie i lokale, w których można zatrzymać się na przerwę, podczas gdy powietrze morskie staje się coraz intensywniejsze w miarę zbliżania się do wybrzeża. Na końcu alei ukazuje się jeden z najbardziej spektakularnych widoków Adriatyku: monumentalne schody Passetto i otaczająca klifowa skała opadająca do morza.',
+          lat:43.6250, lon:13.5240, next:'Monumento ai Caduti del Passetto' },
+        { order:16, name:'Monumento ai Caduti del Passetto', emoji:'🎖️', photo:'passetto.jpg',
+          it:'Il Monumento ai Caduti, inaugurato nel 1930 e progettato dall\'architetto Guido Cirilli, è uno dei simboli architettonici più riconoscibili di Ancona. Le sue maestose colonne in pietra bianca si affacciano direttamente sul mare, creando un\'imponente quinta monumentale che domina la falesia del Passetto. Nato per commemorare i caduti della Prima guerra mondiale, è diventato nel tempo uno dei luoghi più rappresentativi della città. La sottostante grande terrazza panoramica offre una vista straordinaria sulla costa del Monte Conero, sulle spiagge rocciose e sull\'Adriatico. All\'alba e al tramonto il panorama assume colori particolarmente suggestivi, rendendo questo luogo uno dei più fotografati di Ancona. Da qui inizia la lunga scalinata che conduce alla spiaggia e alle celebri Grotte del Passetto, un luogo unico dove mare, tradizione e storia si fondono in un paesaggio davvero inconfondibile.',
+          en:'The Monument to the Fallen, inaugurated in 1930 and designed by architect Guido Cirilli, is one of the most recognisable architectural symbols of Ancona. Its majestic white stone columns face directly onto the sea, creating an imposing monumental backdrop that dominates the Passetto cliff. Created to commemorate the fallen of the First World War, it has become over time one of the most representative places in the city. The large panoramic terrace below offers an extraordinary view of the Monte Conero coast, the rocky beaches and the Adriatic. At dawn and sunset the panorama takes on particularly evocative colours, making this place one of the most photographed in Ancona. From here begins the long staircase that leads to the beach and the famous Grotte del Passetto, a unique place where sea, tradition and history merge in a truly unmistakable landscape.',
+          de:'Das Denkmal für die Gefallenen, 1930 eingeweiht und vom Architekten Guido Cirilli entworfen, ist eines der bekanntesten architektonischen Symbole von Ancona. Seine majestätischen weißen Steinsäulen blicken direkt auf das Meer hinaus und schaffen eine imposante monumentale Kulisse, die die Klippe des Passetto überragt. Geschaffen, um die Gefallenen des Ersten Weltkriegs zu gedenken, ist es im Laufe der Zeit zu einem der repräsentativsten Orte der Stadt geworden. Die große Panoramaterrasse darunter bietet einen außergewöhnlichen Blick auf die Küste des Monte Conero, die felsigen Strände und die Adria. Bei Sonnenaufgang und Sonnenuntergang nimmt das Panorama besonders eindrucksvolle Farben an, was diesen Ort zu einem der meistfotografierten in Ancona macht. Von hier aus beginnt die lange Treppe, die zum Strand und zu den berühmten Grotte del Passetto führt, einem einzigartigen Ort, an dem Meer, Tradition und Geschichte in einer wirklich unverwechselbaren Landschaft verschmelzen.',
+          pl:'Pomnik Poległych, odsłonięty w 1930 roku i zaprojektowany przez architekta Guido Cirilliego, to jeden z najbardziej rozpoznawalnych symboli architektonicznych Ancony. Jego majestatyczne kolumny z białego kamienia wychodzą bezpośrednio na morze, tworząc imponującą monumentalną scenerię dominującą nad klifem Passetto. Stworzony, by upamiętnić poległych w I wojnie światowej, z biegiem czasu stał się jednym z najbardziej reprezentatywnych miejsc miasta. Wielka panoramiczna taras poniżej oferuje niezwykły widok na wybrzeże Monte Conero, skaliste plaże i Adriatyk. O świcie i o zachodzie słońca panorama przybiera szczególnie sugestywne kolory, czyniąc to miejsce jednym z najczęściej fotografowanych w Anconie. Stąd zaczyna się długie schody prowadzące na plażę i do słynnych Grot del Passetto, wyjątkowego miejsca, gdzie morze, tradycja i historia łączą się w naprawdę niezapomnianym krajobrazie.',
+          lat:43.6165, lon:13.5335, next:'Ascensore del Passetto' },
+{ order:17, name:'Ascensore del Passetto', emoji:'🛗', photo:'',
+          it:'L\'ascensore del Passetto è il modo più comodo e veloce per scendere dalla pineta che fiancheggia il Monumento ai Caduti direttamente sulla spiaggia sottostante, evitando la lunga scalinata. Dalla sua piattaforma si gode di una vista straordinaria. Costruito negli anni Cinquanta a picco sul mare, questo ascensore panoramico collega il promontorio del Passetto alla costa e alle prime grotte, offrendo durante la discesa una vista mozzafiato sulla spiaggia e sul mare. È gestito da Conerobus ed è attivo da aprile a ottobre. Il biglietto andata e ritorno costa 1 euro, con abbonamenti stagionali e mensili disponibili per chi frequenta abitualmente la spiaggia. Gli orari variano durante la stagione: in primavera e autunno è aperto dalle 8:00 alle 20:00, mentre in piena estate (luglio e agosto) l\'orario si prolunga fino a mezzanotte, con apertura straordinaria fino all\'1:00 la notte di Ferragosto. Per orari aggiornati, consulta il sito www.conerobus.',
+          en:'The Passetto lift is the most convenient and fastest way to descend from the pine grove alongside the Monument to the Fallen directly to the beach below, avoiding the long staircase. From its platform you can enjoy an extraordinary view. Built in the 1950s on the cliff edge, this panoramic lift connects the Passetto promontory to the coast and the first caves, offering a breathtaking view of the beach and sea during the descent. It is managed by Conerobus and is active from April to October. The round-trip ticket costs 1 euro, with seasonal and monthly subscriptions available for those who regularly frequent the beach. Opening hours vary during the season: in spring and autumn it is open from 8:00 to 20:00, while in the height of summer (July and August) the hours extend until midnight, with special opening until 1:00 on Ferragosto night. For updated hours, visit www.conerobus.',
+          de:'Der Aufzug des Passetto ist die bequemste und schnellste Art, vom Pinienhain neben dem Denkmal für die Gefallenen direkt zum Strand darunter hinabzufahren, wobei die lange Treppe vermieden wird. Von seiner Plattform aus genießt man einen außergewöhnlichen Blick. In den 1950er Jahren direkt an der Klippe gebaut, verbindet dieser Panoramaaufzug das Vorgebirge des Passetto mit der Küste und den ersten Grotten und bietet während der Fahrt einen atemberaubenden Blick auf Strand und Meer. Er wird von Conerobus betrieben und ist von April bis Oktober in Betrieb. Die Hin- und Rückfahrtskarte kostet 1 Euro, mit saisonalen und monatlichen Abonnements für diejenigen, die regelmäßig den Strand besuchen. Die Öffnungszeiten variieren je nach Saison: im Frühling und Herbst ist er von 8:00 bis 20:00 Uhr geöffnet, während im Hochsommer (Juli und August) die Zeiten bis Mitternacht verlängert werden, mit Sonderöffnung bis 1:00 Uhr in der Ferragosto-Nacht. Für aktuelle Zeiten besuchen Sie www.conerobus.',
+          pl:'Winda Passetto to najwygodniejszy i najszybszy sposób na zejście z sosnowego zagajnika wzdłuż Pomnika Poległych bezpośrednio na plażę poniżej, omijając długie schody. Z jej platformy roztacza się niezwykły widok. Zbudowana w latach pięćdziesiątych na skraju klifu, ta panoramiczna winda łączy przylądek Passetto z wybrzeżem i pierwszymi grotami, oferując podczas zjazdu zapierający dech w piersiach widok plaży i morza. Jest zarządzana przez Conerobus i działa od kwietnia do października. Bilet w obie strony kosztuje 1 euro, z dostępnymi abonamentami sezonowymi i miesięcznymi dla osób regularnie korzystających z plaży. Godziny otwarcia różnią się w zależności od sezonu: wiosną i jesienią czynna jest od 8:00 do 20:00, podczas gdy w szczycie lata (lipiec i sierpień) godziny przedłużone są do północy, ze specjalnym otwarciem do 1:00 w noc Ferragosto. Aktualne godziny na www.conerobus.',
+          lat:43.6163, lon:13.5337, next:'Le Grotte del Passetto' },
+        { order:18, name:'Le Grotte del Passetto', emoji:'🕳️', photo:'passetto.jpg',
+          it:'Le Grotte del Passetto sono uno dei luoghi più iconici e fotografati di Ancona, un perfetto incontro tra la forza della natura e l\'ingegno dell\'uomo. Scavate direttamente nella roccia calcarea della falesia a partire dalla fine dell\'Ottocento, queste caratteristiche grotte nacquero come ricovero per le piccole imbarcazioni dei pescatori. Oggi hanno perso la loro funzione originaria e sono utilizzate da molte famiglie anconetane come comodo punto di appoggio attrezzato affacciato direttamente sul mare. Ogni grotta è diversa dall\'altra: porte colorate, dettagli personalizzati e piccoli moli raccontano il profondo legame che la città ha sempre avuto con il mare. Passeggiando lungo il molo si percepisce un\'atmosfera unica, lontana dal turismo di massa. Il rumore delle onde che si infrangono contro la falesia e il profumo della salsedine rendono questo luogo uno dei più autentici di tutta Ancona. Nelle giornate di mare calmo l\'acqua assume incredibili sfumature turchesi e smeraldo, regalando uno scenario ideale per fotografie indimenticabili.',
+          en:'The Grotte del Passetto are one of the most iconic and photographed places in Ancona, a perfect meeting between the force of nature and human ingenuity. Carved directly into the limestone rock of the cliff from the late 19th century, these characteristic caves were born as shelters for small fishing boats. Today they have lost their original function and are used by many Ancona families as a convenient equipped base directly overlooking the sea. Each cave is different from the other: coloured doors, personalised details and small jetties tell of the deep bond that the city has always had with the sea. Walking along the pier, you perceive a unique atmosphere, far from mass tourism. The sound of the waves crashing against the cliff and the scent of salt make this place one of the most authentic in all of Ancona. On calm sea days the water takes on incredible turquoise and emerald shades, offering an ideal setting for unforgettable photographs.',
+          de:'Die Grotte del Passetto sind einer der bekanntesten und meistfotografierten Orte von Ancona, ein perfektes Zusammentreffen von Naturgewalt und menschlichem Einfallsreichtum. Ab dem späten 19. Jahrhundert direkt in das Kalksteinfelsen der Klippe gehauen, entstanden diese charakteristischen Höhlen ursprünglich als Schutz für die kleinen Fischerboote. Heute haben sie ihre ursprüngliche Funktion verloren und werden von vielen Ancona-Familien als bequemer ausgestatteter Stützpunkt direkt am Meer genutzt. Jede Höhle ist anders als die andere: farbige Türen, personalisierte Details und kleine Molen erzählen von der tiefen Verbindung, die die Stadt schon immer mit dem Meer hatte. Beim Spaziergang entlang des Moles spürt man eine einzigartige Atmosphäre, fernab vom Massentourismus. Das Rauschen der Wellen, die gegen die Klippe schlagen, und der Duft des Salzes machen diesen Ort zu einem der authentischsten in ganz Ancona. An ruhigen Tagen nimmt das Wasser unglaubliche Türkis- und Smaragdtöne an und bietet eine ideale Kulisse für unvergessliche Fotografien.',
+          pl:'Grotte del Passetto to jedno z najbardziej rozpoznawalnych i fotografowanych miejsc w Anconie, idealne spotkanie siły natury i ludzkiego pomysłowości. Wyciosane bezpośrednio w wapiennej skale klifu od końca XIX wieku, te charakterystyczne groty powstały jako schronienia dla małych łodzi rybackich. Dziś straciły swoją pierwotną funkcję i są wykorzystywane przez wiele rodzin z Ancony jako wygodny wyposażony punkt oparcia bezpośrednio nad morzem. Każda grota jest inna: kolorowe drzwi, spersonalizowane detale i małe mola opowiadają o głębokiej więzi, jaką miasto zawsze miało z morzem. Spacerując wzdłuż mola, wyczuwa się wyjątkową atmosferę, z dala od masowej turystyki. Szum fal rozbijających się o klif i zapach słonej wody czynią to miejsce jednym z najbardziej autentycznych w całej Anconie. W dni spokojnego morza woda przyjmuje niesamowite odcienie turkusu i szmaragdu, oferując idealne tło dla niezapomnianych zdjęć.',
+          lat:43.6177, lon:13.5330, next:'Spiaggia del Passetto' },
+        { order:19, name:'Spiaggia del Passetto', emoji:'🏖️', photo:'passetto.jpg',
+          it:'Ai piedi della falesia si trova la Spiaggia del Passetto, uno dei luoghi di mare più amati dagli anconetani. A differenza delle classiche spiagge sabbiose dell\'Adriatico, qui il paesaggio è caratterizzato da grandi scogli bianchi blevigati dal mare, acqua limpida e una spettacolare parete rocciosa che protegge la costa. È un ambiente naturale unico, capace di sorprendere chi visita Ancona per la prima volta. La trasparenza dell\'acqua rende questo tratto di costa particolarmente apprezzato per il nuoto, lo snorkeling e i bagni durante l\'estate. Nelle prime ore del mattino e al tramonto il luogo assume un\'atmosfera ancora più suggestiva, quando il sole illumina la falesia con sfumature dorate e il mare diventa incredibilmente calmo. Si consigliano scarpe da scoglio, poiché il fondale è prevalentemente roccioso.',
+          en:'At the foot of the cliff is the Spiaggia del Passetto, one of the most beloved seaside spots for the people of Ancona. Unlike the classic sandy beaches of the Adriatic, here the landscape is characterised by large white rocks smoothed by the sea, clear water and a spectacular rock face that protects the coast. It is a unique natural environment, capable of surprising those who visit Ancona for the first time. The transparency of the water makes this stretch of coast particularly appreciated for swimming, snorkelling and bathing during the summer. In the early morning hours and at sunset the place takes on an even more evocative atmosphere, when the sun illuminates the cliff with golden shades and the sea becomes incredibly calm. Rock shoes are recommended, as the seabed is predominantly rocky.',
+          de:'Am Fuß der Klippe liegt der Spiaggia del Passetto, einer der beliebtesten Badestellen der Anconetaner. Im Gegensatz zu den klassischen Sandstränden der Adria ist die Landschaft hier geprägt von großen weißen Felsen, die vom Meer geglättet wurden, klarem Wasser und einer spektakulären Felswand, die die Küste schützt. Es ist eine einzigartige natürliche Umgebung, die diejenigen überraschen kann, die Ancona zum ersten Mal besuchen. Die Transparenz des Wassers macht diesen Küstenabschnitt besonders zum Schwimmen, Schnorcheln und Baden im Sommer geschätzt. In den frühen Morgenstunden und bei Sonnenuntergang nimmt der Ort eine noch eindrucksvollere Atmosphäre an, wenn die Sonne die Klippe mit goldenen Farbtönen beleuchtet und das Meer unglaublich ruhig wird. Felsenschuhe werden empfohlen, da der Meeresboden überwiegend felsig ist.',
+          pl:'U podnóża klifu znajduje się Spiaggia del Passetto, jedno z najbardziej ukochanych miejsc nad morzem mieszkańców Ancony. W przeciwieństwie do klasycznych piaszczystych plaż Adriatyku, krajobraz tutaj charakteryzuje się dużymi białymi skałami wygładzonymi przez morze, krystaliczną wodą i spektakularną ścianą skalną chroniącą wybrzeże. To wyjątkowe środowisko naturalne, zdolne zaskoczyć tych, którzy odwiedzają Ankonę po raz pierwszy. Przejrzystość wody sprawia, że ten odcinek wybrzeża jest szczególnie ceniony do pływania, snorkelingu i kąpieli podczas lata. W pierwszych godzinach porannych i o zachodzie słońca miejsce nabiera jeszcze bardziej sugestywnej atmosfery, gdy słońce oświetla klif złotymi odcieniami, a morze staje się niesamowicie spokojne. Zalecane są buty do skał, ponieważ dno jest przeważnie skaliste.',
+          lat:43.6171, lon:13.5339, next:'Seggiola del Papa' },
+        { order:20, name:'Seggiola del Papa', emoji:'🪨', photo:'',
+          it:'La Seggiola del Papa è uno degli scorci più suggestivi delle spiagge di Ancona. Si tratta di una caratteristica formazione rocciosa affacciata sul mare che, per la sua forma, ricorda un grande trono naturale. Situata di fronte alla zone terminale delle grotte del Passetto, su una lunga formazione rocciosa conosciuta dagli anconetani come "il quadrato", la Seggiola del Papa è una meta caratteristica molto apprezzata. Da questo punto lo sguardo spazia su un lungo tratto cittadino di falesia.',
+          en:'The Seggiola del Papa is one of the most evocative glimpses of the beaches of Ancona. It is a characteristic rock formation overlooking the sea which, due to its shape, resembles a large natural throne. Located opposite the end zone of the Passetto caves, on a long rock formation known to the Anconetani as "il quadrato", the Seggiola del Papa is a much-appreciated characteristic destination. From this point the gaze ranges over a long stretch of city cliff.',
+          de:'Die Seggiola del Papa ist einer der eindrucksvollsten Ausblicke der Strände von Ancona. Es handelt sich um eine charakteristische Felsformation, die auf das Meer hinausblickt und durch ihre Form an einen großen natürlichen Thron erinnert. Sie befindet sich gegenüber dem Endbereich der Passetto-Grotten, auf einer langen Felsformation, die von den Anconetanern als "il quadrato" bekannt ist. Die Seggiola del Papa ist ein viel geschätztes charakteristisches Ziel. Von diesem Punkt reicht der Blick über einen langen Abschnitt der Stadtklippe.',
+          pl:'Seggiola del Papa to jeden z najbardziej sugestywnych widoków plaż Ancony. To charakterystyczna formacja skalna wychodząca na morze, która ze względu na swój kształt przypomina wielki naturalny tron. Zlokalizowana naprzeciwko strefy końcowej grot Passetto, na długiej formacji skalnej znanej Anconetanom jako "il quadrato", Seggiola del Papa jest bardzo cenionym charakterystycznym celem. Z tego punktu wzrok sięga na długi odcinek miejskiego klifu.',
+          lat:43.6195, lon:13.5314, next:'Parco del Cardeto' },
+        { order:21, name:'Parco del Cardeto', emoji:'🌳', photo:'cittadella.jpg',
+          it:'Il Parco del Cardeto è il più grande parco urbano di Ancona e uno dei luoghi che meglio raccontano l\'anima della città. Qui, proprio a ridosso del centro della città, convivono natura, storia, archeologia e panorami spettacolari in un unico percorso che si è conservato perfettamente grazie all\'uso militare che fino al 1999 ne ha impedito l\'urbanizzazione. Esteso su oltre trentacinque ettari affacciati sul mare, il parco aperto nel 2005 occupa due colli da cui si godono viste straordinarie sul porto, sul centro storico, sul Monte Conero e sull\'intera costa adriatica. Passeggiando tra prati, sentieri e antiche fortificazioni si incontrano testimonianze di epoche diverse: il vecchio faro, batterie militari, resti difensivi e il suggestivo Cimitero Ebraico, uno dei più antichi e importanti d\'Europa. Il Cardeto è il luogo ideale per chi desidera rallentare il ritmo della visita, passeggiare nella natura o semplicemente sedersi ad ammirare il panorama in assoluto silenzio. Molti anconetani lo considerano il punto più bello della città per osservare il tramonto sul mare.',
+          en:'The Parco del Cardeto is the largest urban park in Ancona and one of the places that best tells the soul of the city. Here, right next to the city centre, nature, history, archaeology and spectacular panoramas coexist in a single route that has been perfectly preserved thanks to the military use that until 1999 prevented its urbanisation. Extending over more than thirty-five hectares overlooking the sea, the park opened in 2005 occupies two hills from which extraordinary views of the port, the historic centre, Monte Conero and the entire Adriatic coast can be enjoyed. Walking among meadows, paths and ancient fortifications, you encounter testimonies from different eras: the old lighthouse, military batteries, defensive remains and the evocative Jewish Cemetery, one of the oldest and most important in Europe. The Cardeto is the ideal place for those who want to slow down the pace of the visit, walk in nature or simply sit and admire the panorama in absolute silence. Many Anconetani consider it the most beautiful spot in the city to watch the sunset over the sea.',
+          de:'Der Parco del Cardeto ist der größte Stadtpark von Ancona und einer der Orte, die die Seele der Stadt am besten erzählen. Hier, direkt neben dem Stadtzentrum, koexistieren Natur, Geschichte, Archäologie und spektakuläre Panoramen in einem einzigen Weg, der dank der militärischen Nutzung, die bis 1999 seine Urbanisierung verhinderte, perfekt erhalten geblieben ist. Auf über fünfunddreißig Hektar Meer zugewandt erstreckt sich der 2005 eröffnete Park über zwei Hügel, von denen aus man einen außergewöhnlichen Blick auf den Hafen, das historische Zentrum, den Monte Conero und die gesamte Adriaküste genießt. Beim Spaziergang zwischen Wiesen, Wegen und alten Befestigungen begegnet man Zeugnissen verschiedener Epochen: dem alten Leuchtturm, Militärbatterien, Verteidigungsresten und dem eindrucksvollen Jüdischen Friedhof, einem der ältesten und wichtigsten Europas. Der Cardeto ist der ideale Ort für diejenigen, die den Besuchstempo verlangsamen, in der Natur spazieren oder einfach sitzen und das Panorama in absoluter Stille bewundern möchten. Viele Anconetaner halten ihn für den schönsten Ort der Stadt, um den Sonnenuntergang über dem Meer zu beobachten.',
+          pl:'Parco del Cardeto to największy park miejski w Anconie i jedno z miejsc, które najlepiej opowiadają duszę miasta. Tutaj, tuż obok centrum miasta, współistnieją natura, historia, archeologia i spektakularne panoramy w jednym szlaku, który został doskonale zachowany dzięki użyciu wojskowemu, które do 1999 roku uniemożliwiało jego urbanizację. Rozciągający się na ponad trzydzieści pięć hektarów z widokiem na morze, park otwarty w 2005 roku zajmuje dwa wzgórza, z których roztacza się niezwykły widok na port, historyczne centrum, Monte Conero i całe wybrzeże adriatyckie. Spacerując między łąkami, ścieżkami i starożytnymi fortyfikacjami, napotykasz świadectwa różnych epok: stara latarnia morska, baterie wojskowe, pozostałości obronne i sugestywny Cmentarz Żydowski, jeden z najstarszych i najważniejszych w Europie. Cardeto to idealne miejsce dla tych, którzy chcą zwolnić tempo zwiedzania, spacerować w naturze lub po prostu usiąść i podziwiać panoramę w absolutnej ciszy. Wielu mieszkańców Ancony uważa je za najpiękniejsze miejsce w mieście do obserwowania zachodu słońca nad morzem.',
+          lat:43.6200, lon:13.5280, next:'Faro Vecchio' },
+        { order:22, name:'Faro Vecchio', emoji:'🔦', photo:'',
+          it:'Nel cuore del Parco del Cardeto sorge il Faro Vecchio, costruito nel 1860 poco dopo l\'Unità d\'Italia. Per oltre un secolo ha guidato le navi in ingresso nel porto di Ancona, diventando uno dei punti di riferimento più importanti della navigazione lungo la costa adriatica. Sebbene oggi non sia più operativo, continua a rappresentare uno dei simboli della vocazione marinara della città. La posizione del faro è straordinaria: da qui lo sguardo abbraccia il porto commerciale, il centro storico, il Duomo, il Monte Conero e, nelle giornate più limpide, gran parte della costa marchigiana. L\'area circostante è particolarmente apprezzata dagli appassionati di fotografia e da chi cerca uno dei panorami più ampi e suggestivi di Ancona. È uno di quei luoghi in cui vale la pena fermarsi qualche minuto, lasciandosi accompagnare dal vento e dal rumore del mare.',
+          en:'In the heart of the Parco del Cardeto stands the Faro Vecchio, built in 1860 shortly after Italian unification. For over a century it guided ships entering the port of Ancona, becoming one of the most important landmarks of navigation along the Adriatic coast. Although no longer operational today, it continues to represent one of the symbols of the city\'s seafaring vocation. The position of the lighthouse is extraordinary: from here the gaze embraces the commercial port, the historic centre, the Duomo, Monte Conero and, on the clearest days, much of the Marche coast. The surrounding area is particularly appreciated by photography enthusiasts and those seeking one of the widest and most evocative panoramas of Ancona. It is one of those places where it is worth stopping for a few minutes, letting yourself be accompanied by the wind and the sound of the sea.',
+          de:'Im Herzen des Parco del Cardeto steht der Faro Vecchio, 1860 kurz nach der Einigung Italiens erbaut. Über ein Jahrhundert lang führte er die Schiffe in den Hafen von Ancona ein und wurde zu einem der wichtigsten Orientierungspunkte der Navigation entlang der Adriaküste. Obwohl er heute nicht mehr in Betrieb ist, bleibt er eines der Symbole der seefahrenden Berufung der Stadt. Die Lage des Leuchtturms ist außergewöhnlich: von hier umfasst der Blick den Handelshafen, das historische Zentrum, die Kathedrale, den Monte Conero und an den klarsten Tagen weite Teile der Küste der Marken. Die Umgebung wird besonders von Fotografiebegeisterten und denjenigen geschätzt, die eines der weitesten und eindrucksvollsten Panoramen von Ancona suchen. Es ist einer dieser Orte, an denen es sich lohnt, einige Minuten innezuhalten und sich vom Wind und dem Rauschen des Meeres begleiten zu lassen.',
+          pl:'W sercu Parco del Cardeto stoi Faro Vecchio, zbudowany w 1860 roku niedługo po zjednoczeniu Włoch. Przez ponad wiek prowadził statki wchodzące do portu Ancony, stając się jednym z najważniejszych punktów orientacyjnych żeglugi wzdłuż wybrzeża adriatyckiego. Choć dziś nie jest już czynny, wciąż reprezentuje jeden z symboli morskiego powołania miasta. Położenie latarni jest nadzwyczajne: stąd wzrok obejmuje port handlowy, historyczne centrum, katedrę, Monte Conero i, w najjaśniejsze dni, znaczną część wybrzeża Marche. Okolica jest szczególnie ceniona przez miłośników fotografii i tych, którzy szukają jednego z najszerszych i najbardziej sugestywnych widoków Ancony. To jedno z tych miejsc, w których warto zatrzymać się na kilka minut, dając się ponieść wiatrowi i szumowi morza.',
+          lat:43.6205, lon:13.5285, next:'Cimitero Ebraico' },
+        { order:23, name:'Cimitero Ebraico', emoji:'✡️', photo:'',
+          it:'All\'interno del Parco del Cardeto si trova il Cimitero Ebraico, un luogo di straordinario valore storico e culturale. Vi si trovano 178 cippi funerari con iscrizioni ebraiche che datano dal XV secolo al XIX secolo. È tra i cimiteri ebraici più grandi e meglio conservati d\'Europa. Passeggiando tra le antiche lapidi immerse nel verde si respira un\'atmosfera di grande tranquillità e rispetto. Le iscrizioni, spesso in ebraico e in latino, testimoniano la ricchezza culturale e la storia di una comunità che ha contribuito in modo significativo allo sviluppo della città. La visita rappresenta un\'occasione per conoscere un aspetto meno noto di Ancona, ma fondamentale per comprenderne la storia e l\'identità multiculturale.',
+          en:'Inside the Parco del Cardeto is the Jewish Cemetery, a place of extraordinary historical and cultural value. There are 178 tombstones with Hebrew inscriptions dating from the 15th to the 19th century. It is among the largest and best preserved Jewish cemeteries in Europe. Walking among the ancient tombstones immersed in greenery, one breathes an atmosphere of great tranquillity and respect. The inscriptions, often in Hebrew and Latin, testify to the cultural richness and history of a community that contributed significantly to the development of the city. The visit represents an opportunity to learn about a lesser-known aspect of Ancona, but fundamental to understanding its history and multicultural identity.',
+          de:'Im Inneren des Parco del Cardeto befindet sich der Jüdische Friedhof, ein Ort von außergewöhnlichem historischen und kulturellen Wert. Es gibt 178 Grabsteine mit hebräischen Inschriften, die vom 15. bis zum 19. Jahrhundert datieren. Er ist einer der größten und am besten erhaltenen jüdischen Friedhöfe Europas. Beim Spaziergang zwischen den alten Grabsteinen, eingetaucht in das Grün, atmet man eine Atmosphäre großer Ruhe und Achtung. Die Inschriften, oft auf Hebräisch und Latein, zeugen von der kulturellen Reichtum und Geschichte einer Gemeinschaft, die maßgeblich zur Entwicklung der Stadt beigetragen hat. Der Besuch bietet die Gelegenheit, einen weniger bekannten Aspekt von Ancona kennenzulernen, der jedoch grundlegend ist, um ihre Geschichte und multikulturelle Identität zu verstehen.',
+          pl:'Wewnątrz Parco del Cardeto znajduje się Cmentarz Żydowski, miejsce o niezwykłej wartości historycznej i kulturalnej. Znajduje się tu 178 nagrobków z hebrajskimi napisami datowanymi od XV do XIX wieku. Jest to jeden z największych i najlepiej zachowanych cmentarzy żydowskich w Europie. Spacerując wśród starożytnych nagrobków zanurzonych w zieleni, oddycha się atmosferą wielkiego spokoju i szacunku. Napisy, często po hebrajsku i łacinie, świadczą o bogactwie kulturalnym i historii społeczności, która znacząco przyczyniła się do rozwoju miasta. Wizyta stanowi okazję do poznania mniej znanego aspektu Ancony, ale fundamentalnego dla zrozumienia jej historii i wielokulturowej tożsamości.',
+          lat:43.6210, lon:13.5290, next:'Parco della Cittadella' },
+        { order:24, name:'Parco della Cittadella', emoji:'🏰', photo:'cittadella.jpg',
+          it:'Il Parco della Cittadella occupa uno dei punti più elevati di Ancona e conserva una delle opere di architettura militare rinascimentale più importanti dell\'Italia centrale. La fortezza fu progettata nel 1532 da Antonio da Sangallo il Giovane per volontà di Papa Clemente VII, con lo scopo di rafforzare le difese della città dopo l\'annessione allo Stato Pontificio. La sua caratteristica pianta a cinque bastioni rappresenta uno dei migliori esempi dell\'evoluzione dell\'ingegneria militare del Cinquecento. Oggi la Cittadella è un grande parco pubblico dove storia e natura convivono armoniosamente. Passeggiando tra i bastioni, i prati e gli alberi secolari si possono ancora riconoscere le antiche strutture difensive che per secoli hanno protetto Ancona. Dai punti panoramici il panorama spazia dal porto al centro storico, fino alle colline marchigiane, offrendo una prospettiva completamente diversa rispetto a quella del Colle Guasco o del Passetto.',
+          en:'The Parco della Cittadella occupies one of the highest points of Ancona and preserves one of the most important works of Renaissance military architecture in central Italy. The fortress was designed in 1532 by Antonio da Sangallo the Younger at the behest of Pope Clement VII, with the aim of strengthening the city\'s defences after annexation to the Papal States. Its characteristic five-bastion plan represents one of the best examples of the evolution of 16th-century military engineering. Today the Cittadella is a large public park where history and nature coexist harmoniously. Walking among the bastions, meadows and centuries-old trees, the ancient defensive structures that for centuries protected Ancona can still be recognised. From the panoramic points the panorama ranges from the port to the historic centre, to the Marche hills, offering a completely different perspective from that of Colle Guasco or the Passetto.',
+          de:'Der Parco della Cittadella nimmt einen der höchsten Punkte von Ancona ein und bewahrt eines der wichtigsten Werke der Renaissance-Militärarchitektur in Mittelitalien. Die Festung wurde 1532 von Antonio da Sangallo dem Jüngeren im Auftrag von Papst Clemens VII. entworfen, um die Verteidigung der Stadt nach der Annexion an den Kirchenstaat zu stärken. Ihr charakteristischer Grundriss mit fünf Bastionen stellt eines der besten Beispiele der Entwicklung der Militärtechnik des 16. Jahrhunderts dar. Heute ist die Cittadella ein großer öffentlicher Park, in dem Geschichte und Natur harmonisch koexistieren. Beim Spaziergang zwischen den Bastionen, Wiesen und jahrhundertealten Bäumen können die alten Verteidigungsstrukturen noch erkannt werden, die Ancona über Jahrhunderte geschützt haben. Von den Aussichtspunkten reicht das Panorama vom Hafen bis zum historischen Zentrum und zu den Hügeln der Marken und bietet eine völlig andere Perspektive als die vom Colle Guasco oder dem Passetto.',
+          pl:'Parco della Cittadella zajmuje jeden z najwyższych punktów Ancony i zachowuje jedno z najważniejszych dzieł architektury wojskowej renesansu w środkowych Włoszech. Twierdza została zaprojektowana w 1532 roku przez Antonio da Sangallo Młodszego z woli papieża Klemensa VII, w celu wzmocnienia obrony miasta po przyłączeniu do Państwa Kościelnego. Jej charakterystyczny plan z pięcioma bastionami stanowi jeden z najlepszych przykładów ewolucji inżynierii wojskowej XVI wieku. Dziś Cittadella to duży park publiczny, gdzie historia i natura współistnieją w harmonii. Spacerując wśród bastionów, łąk i wiekowych drzew, wciąż można rozpoznać starożytne struktury obronne, które przez wieki chroniły Ankonę. Z punktów widokowych panorama rozciąga się od portu po historyczne centrum, po wzgórza Marche, oferując zupełnie inną perspektywę niż ta z Colle Guasco czy Passetto.',
+          lat:43.6215, lon:13.5295, next:'Piazza Roma' },
+        { order:25, name:'Piazza Roma', emoji:'🏛️', photo:'',
+          it:'Piazza Roma rappresenta il cuore amministrativo e commerciale di Ancona. Da oltre due secoli è uno dei principali punti di riferimento della vita cittadina, grazie alla sua posizione strategica tra il porto, il centro storico e le vie dello shopping e, più importante di tutto, vi si trova l\'Affittacamere Ancona Centro 🤩. Al centro della piazza si trova la scenografica Fontana del Calamo Minore, anche chiamata fontana dei cavalli, mentre tutto intorno si affacciano eleganti edifici ottocenteschi, negozi storici, caffetterie e uffici pubblici. Durante la giornata la piazza è animata dalle bancarelle del mercato ambulante e da un continuo via vai di residenti e visitatori, offrendo uno spaccato autentico della quotidianità anconetana. Grazie alla sua posizione centrale costituisce anche un ottimo punto di partenza per esplorare le diverse anime della città.',
+          en:'Piazza Roma represents the administrative and commercial heart of Ancona. For over two centuries it has been one of the main reference points of city life, thanks to its strategic position between the port, the historic centre and the shopping streets and, most importantly, the Affittacamere Ancona Centro is located here 🤩. In the centre of the square is the scenic Fontana del Calamo Minore, also called the fountain of the horses, while all around stand elegant 19th-century buildings, historic shops, cafés and public offices. During the day the square is animated by the stalls of the street market and a continuous coming and going of residents and visitors, offering an authentic glimpse of Ancona daily life. Thanks to its central position it is also an excellent starting point for exploring the different souls of the city.',
+          de:'Die Piazza Roma repräsentiert das administrative und kommerzielle Herz von Ancona. Seit über zwei Jahrhunderten ist sie einer der wichtigsten Bezugspunkte des städtischen Lebens, dank ihrer strategischen Lage zwischen dem Hafen, dem historischen Zentrum und den Einkaufsstraßen und, was am wichtigsten ist, hier befindet sich das Affittacamere Ancona Centro 🤩. In der Mitte des Platzes befindet sich die malerische Fontana del Calamo Minore, auch Brunnen der Pferde genannt, während ringsum elegante Gebäude aus dem 19. Jahrhundert, historische Geschäfte, Cafés und öffentliche Büros stehen. Tagsüber wird der Platz von den Ständen des Straßenmarktes und einem ständigen Kommen und Gehen von Einwohnern und Besuchern belebt und bietet einen authentischen Einblick in den Alltag von Ancona. Dank ihrer zentralen Lage ist sie auch ein ausgezeichneter Ausgangspunkt, um die verschiedenen Seelen der Stadt zu erkunden.',
+          pl:'Piazza Roma reprezentuje administracyjne i handlowe serce Ancony. Od ponad dwóch stuleci jest jednym z głównych punktów odniesienia życia miejskiego, dzięki swojemu strategicznemu położeniu między portem, historycznym centrum a ulicami handlowymi i, co najważniejsze, tutaj znajduje się Affittacamere Ancona Centro 🤩. W centrum placu znajduje się malownicza Fontana del Calamo Minore, zwana też fontanną koni, podczas gdy wokół stoją eleganckie budynki z XIX wieku, zabytkowe sklepy, kawiarnie i urzędy publiczne. W ciągu dnia plac ożywiają stragany targowiska ulicznego oraz nieustanny ruch mieszkańców i turystów, oferując autentyczny obraz codziennego życia Ancony. Dzięki swojemu centralnemu położeniu stanowi również doskonały punkt wyjścia do odkrywania różnych oblicz miasta.',
+          lat:43.6170, lon:13.5100, next:'Mercato delle Erbe' },
+        { order:26, name:'Mercato delle Erbe', emoji:'🥬', photo:'mercato-erbe.jpg',
+          it:'Il Mercato delle Erbe è molto più di un semplice mercato coperto: è un simbolo della città, un capolavoro in stile Liberty e il luogo dove l\'Ancona più autentica si svela tra banchi di frutta, verdura e pesce fresco. Costruito nel 1926 su progetto dell\'ingegnere Federico Federiconi, il mercato è una splendida struttura in ferro e ghisa. La sua storia è affascinante: fu realizzato dagli operai del cantiere navale di Ancona utilizzando il metallo di alcune navi austriache, tra cui la corazzata che aveva cannoneggiato la città nel 1915. Le sue quattro grandi arcate reticolari creano una vera e propria piazza coperta, illuminata dalle vetrate che lasciano entrare la luce. Qui fanno la spesa gli abitanti della città e molti produttori locali raccontano con passione il proprio lavoro. È il posto perfetto per assaggiare specialità del territorio, acquistare prodotti freschi a chilometro zero o semplicemente osservare il ritmo della vita quotidiana lontano dai percorsi turistici più conosciuti. Aperto dal lunedì al sabato, in inverno con orario 7:00-13:00 e 16:30-19:30, in estate 7:00-13:00 e 17:00-20:00 (chiuso il giovedì pomeriggio). Attualmente sono in corso lavori di riqualificazione, ma il mercato resta aperto al pubblico. I banchi chiudono verso le 13, quindi vai al mattino presto per trovare la roba più fresca. Una breve sosta tra questi banchi permette di scoprire un volto autentico della città che spesso rimane nascosto ai visitatori più frettolosi.',
+          en:'The Mercato delle Erbe is much more than a simple covered market: it is a symbol of the city, an Art Nouveau masterpiece and the place where the most authentic Ancona reveals itself among stalls of fruit, vegetables and fresh fish. Built in 1926 to a design by engineer Federico Federiconi, the market is a splendid iron and cast iron structure. Its history is fascinating: it was built by the workers of the Ancona shipyard using metal from some Austrian ships, including the battleship that had bombarded the city in 1915. Its four large lattice arches create a real covered square, illuminated by glass windows that let in the light. Here the inhabitants of the city do their shopping and many local producers tell their work with passion. It is the perfect place to taste local specialities, buy fresh zero-kilometre products or simply observe the rhythm of daily life away from the best-known tourist routes. Open Monday to Saturday, in winter from 7:00-13:00 and 16:30-19:30, in summer 7:00-13:00 and 17:00-20:00 (closed Thursday afternoon). Renovation work is currently underway, but the market remains open to the public. The stalls close around 13:00, so go early in the morning to find the freshest produce. A brief stop among these stalls allows you to discover an authentic face of the city that often remains hidden to the most hurried visitors.',
+          de:'Der Mercato delle Erbe ist viel mehr als ein einfacher überdachter Markt: er ist ein Symbol der Stadt, ein Meisterwerk im Jugendstil und der Ort, an dem das authentischste Ancona sich zwischen Ständen mit Obst, Gemüse und frischem Fisch offenbart. 1926 nach einem Entwurf des Ingenieurs Federico Federiconi erbaut, ist der Markt eine prächtige Eisen- und Gusseisenkonstruktion. Seine Geschichte ist faszinierend: er wurde von den Arbeitern der Ancona-Werft gebaut, unter Verwendung von Metall einiger österreichischer Schiffe, darunter das Schlachtschiff, das die Stadt 1915 bombardiert hatte. Seine vier großen Gitterbögen schaffen einen echten überdachten Platz, beleuchtet durch Glasfenster, die Licht hereinlassen. Hier kaufen die Einwohner der Stadt ein und viele lokale Produzenten erzählen mit Leidenschaft von ihrer Arbeit. Es ist der perfekte Ort, um lokale Spezialitäten zu probieren, frische Produkte aus der Region zu kaufen oder einfach den Rhythmus des Alltags abseits der bekanntesten Touristenrouten zu beobachten. Geöffnet von Montag bis Samstag, im Winter von 7:00-13:00 und 16:30-19:30, im Sommer 7:00-13:00 und 17:00-20:00 (Donnerstagnachmittag geschlossen). Derzeit laufen Renovierungsarbeiten, aber der Markt bleibt für die Öffentlichkeit zugänglich. Die Stände schließen gegen 13:00 Uhr, also gehen Sie am frühen Morgen, um die frischesten Produkte zu finden. Ein kurzer Stopp zwischen diesen Ständen ermöglicht es, ein authentisches Gesicht der Stadt zu entdecken, das oft vor den eiligeren Besuchern verborgen bleibt.',
+          pl:'Mercato delle Erbe to znacznie więcej niż zwykły kryty targ: to symbol miasta, arcydzieło w stylu secesyjnym i miejsce, gdzie najbardziej autentyczna Ancona odsłania się między straganami z owocami, warzywami i świeżą rybą. Zbudowany w 1926 roku według projektu inżyniera Federico Federiconiego, targ to wspaniała konstrukcja z żelaza i żeliwa. Jego historia jest fascynująca: został wybudowany przez robotników stoczni w Anconie, wykorzystując metal z niektórych austriackich statków, w tym pancernika, który ostrzelał miasto w 1915 roku. Cztery duże arkady kratownicowe tworzą prawdziwy kryty plac, oświetlony witrażami wpuszczającymi światło. Tutaj mieszkańcy miasta robią zakupy, a wielu lokalnych producentów z pasją opowiada o swojej pracy. To idealne miejsce, by skosztować lokalnych specjałów, kupić świeże produkty z zerowym kilometrem lub po prostu obserwować rytm codziennego życia z dala od najbardziej znanych szlaków turystycznych. Otwarty od poniedziałku do soboty, zimą w godzinach 7:00-13:00 i 16:30-19:30, latem 7:00-13:00 i 17:00-20:00 (czwartkowe popołudnia zamknięte). Obecnie trwają prace renowacyjne, ale targ pozostaje otwarty dla publiczności. Stragany zamykają się około 13:00, więc udaj się wcześnie rano, by znaleźć najświeższe produkty. Krótki przystanek między straganami pozwala odkryć autentyczną twarz miasta, która często pozostaje ukryta przed najbardziej zabieganymi zwiedzającymi.',
+          lat:43.6175, lon:13.5105, next:'Mole Vanvitelliana' },
+        { order:27, name:'Mole Vanvitelliana (Lazzaretto)', emoji:'🏛️', photo:'mole-vanvitelliana.jpg',
+          it:'La Mole Vanvitelliana, conosciuta anche come Lazzaretto, è uno degli edifici più affascinanti e originali di Ancona. Progettata nel Settecento da Luigi Vanvitelli, sorge su un\'isola artificiale pentagonale collegata alla terraferma da un ponte. La sua particolare forma rispondeva a esigenze sia sanitarie sia difensive: qui venivano poste in quarantena persone e merci provenienti dai porti del Mediterraneo, contribuendo a proteggere la città dalla diffusione delle epidemie. Nel corso dei secoli la Mole ha avuto numerose funzioni, da deposito militare a ospedale, fino a trasformarsi nell\'attuale polo culturale che ospita mostre, concerti, festival ed eventi. Passeggiando nel grande cortile interno si percepisce tutta l\'armonia del progetto vanvitelliano, considerato uno dei più significativi esempi di architettura illuminista in Italia. La sera, quando l\'edificio si riflette nelle acque del porto, la Mole offre uno degli scorci più suggestivi di Ancona. Nelle sere d\'estate si svolge una apprezzata rassegna di cinema all\'aperto.',
+          en:'The Mole Vanvitelliana, also known as the Lazzaretto, is one of the most fascinating and original buildings in Ancona. Designed in the 18th century by Luigi Vanvitelli, it stands on an artificial pentagonal island connected to the mainland by a bridge. Its particular shape responded to both health and defensive needs: here people and goods from Mediterranean ports were quarantined, helping to protect the city from the spread of epidemics. Over the centuries the Mole has had numerous functions, from military depot to hospital, until transforming into the current cultural hub that hosts exhibitions, concerts, festivals and events. Walking in the large inner courtyard, one perceives all the harmony of the Vanvitelli project, considered one of the most significant examples of Enlightenment architecture in Italy. In the evening, when the building is reflected in the waters of the port, the Mole offers one of the most evocative glimpses of Ancona. On summer evenings, a popular open-air cinema festival takes place.',
+          de:'Die Mole Vanvitelliana, auch als Lazzaretto bekannt, ist eines der faszinierendsten und originellsten Gebäude von Ancona. Im 18. Jahrhundert von Luigi Vanvitelli entworfen, steht sie auf einer künstlichen fünfeckigen Insel, die durch eine Brücke mit dem Festland verbunden ist. Ihre besondere Form entsprach sowohl gesundheitlichen als auch defensiven Bedürfnissen: hier wurden Menschen und Waren aus Mittelmeerhäfen in Quarantäne gestellt, um die Stadt vor der Ausbreitung von Epidemien zu schützen. Im Laufe der Jahrhunderte hatte die Mole zahlreiche Funktionen, von Militärdepot bis Krankenhaus, bis sie sich in den heutigen Kulturpol verwandelte, der Ausstellungen, Konzerte, Festivals und Veranstaltungen beherbergt. Beim Spaziergang im großen Innenhof spürt man die ganze Harmonie des Vanvitelli-Projekts, das als eines der bedeutendsten Beispiele der Aufklärungsarchitektur in Italien gilt. Abends, wenn sich das Gebäude im Wasser des Hafens spiegelt, bietet die Mole einen der eindrucksvollsten Ausblicke von Ancona. An Sommerabenden findet ein beliebtes Open-Air-Kino-Festival statt.',
+          pl:'Mole Vanvitelliana, znana również jako Lazzaretto, to jeden z najbardziej fascynujących i oryginalnych budynków w Anconie. Zaprojektowana w XVIII wieku przez Luigiego Vanvitelliego, stoi na sztucznej pięciokątnej wyspie połączonej z lądem mostem. Jej szczególny kształt odpowiadał zarówno potrzebom sanitarnym, jak i obronnym: tutaj osoby i towary z portów śródziemnomorskich były poddawane kwarantannie, pomagając chronić miasto przed rozprzestrzenianiem się epidemii. W ciągu wieków Mole pełniła wiele funkcji, od magazynu wojskowego po szpital, aż do przekształcenia się w obecny ośrodek kulturalny, który gości wystawy, koncerty, festiwale i wydarzenia. Spacerując po dużym dziedzińcu wewnętrznym, wyczuwa się całą harmonię projektu Vanvitelliego, uważanego za jeden z najbardziej znaczących przykładów architektury oświeceniowej we Włoszech. Wieczorem, gdy budynek odbija się w wodach portu, Mole oferuje jeden z najbardziej sugestywnych widoków Ancony. Letnimi wieczorami odbywa się tu ceniony festiwal kina pod gołym niebem.',
+          lat:43.6150, lon:13.5050, next:'Museo Tattile Statale Omero' },
+        { order:28, name:'Museo Tattile Statale Omero', emoji:'🖐️', photo:'',
+          it:'All\'interno della Mole Vanvitelliana ha sede il Museo Tattile Statale Omero, una realtà unica nel suo genere e conosciuta a livello internazionale. Nato per rendere l\'arte accessibile anche alle persone non vedenti e ipovedenti, il museo invita tutti i visitatori a fare ciò che normalmente nei musei è vietato: toccare le opere. Riproduzioni di celebri sculture, modelli architettonici e opere originali permettono di scoprire il patrimonio artistico attraverso il tatto, offrendo un\'esperienza coinvolgente e inclusiva. La visita è consigliata non solo per il suo valore culturale, ma anche perché permette di vivere l\'arte da una prospettiva completamente nuova, capace di sorprendere adulti e bambini.',
+          en:'Inside the Mole Vanvitelliana is the Museo Tattile Statale Omero, a unique reality of its kind and internationally known. Created to make art accessible also to blind and visually impaired people, the museum invites all visitors to do what is normally forbidden in museums: touch the works. Reproductions of famous sculptures, architectural models and original works allow you to discover the artistic heritage through touch, offering an engaging and inclusive experience. The visit is recommended not only for its cultural value, but also because it allows you to experience art from a completely new perspective, capable of surprising adults and children.',
+          de:'Im Inneren der Mole Vanvitelliana befindet sich das Museo Tattile Statale Omero, eine einzigartige Einrichtung ihrer Art und international bekannt. Geschaffen, um Kunst auch für blinde und sehbehinderte Menschen zugänglich zu machen, lädt das Museum alle Besucher ein, das zu tun, was normalerweise in Museen verboten ist: die Werke zu berühren. Reproduktionen berühmter Skulpturen, architektonische Modelle und Originalwerke ermöglichen es, das künstlerische Erbe durch Berührung zu entdecken und bieten ein fesselndes und integratives Erlebnis. Der Besuch wird nicht nur wegen seines kulturellen Wertes empfohlen, sondern auch weil er es ermöglicht, Kunst aus einer völlig neuen Perspektive zu erleben, die Erwachsene und Kinder überraschen kann.',
+          pl:'Wewnątrz Mole Vanvitelliana mieści się Museo Tattile Statale Omero, wyjątkowa placówka na skalę światową. Stworzona, by uczynić sztukę dostępną również dla osób niewidomych i niedowidzących, muzeum zaprasza wszystkich zwiedzających do robienia tego, co zazwyczaj w muzeach jest zabronione: dotykania dzieł. Reprodukcje słynnych rzeźb, modele architektoniczne i oryginalne prace pozwalają odkrywać dziedzictwo artystyczne przez dotyk, oferując angażujące i inkluzywne doświadczenie. Wizyta jest polecana nie tylko ze względu na jej wartość kulturalną, ale także dlatego, że pozwala przeżyć sztukę z zupełnie nowej perspektywy, zdolnej zaskoczyć dorosłych i dzieci.',
+          lat:43.6150, lon:13.5050, next:'Porto Antico' },
+           { order:29, name:'Porto Antico', emoji:'⚓', photo:'',
+          it:'Il Porto Antico è il luogo dove Ancona continua a vivere il suo rapporto millenario con il mare. A differenza di molti porti storici trasformati esclusivamente in aree turistiche, quello di Ancona conserva ancora oggi una straordinaria vitalità. Navi commerciali, traghetti diretti verso Grecia, Croazia e Albania, pescherecci e imbarcazioni da diporto convivono ogni giorno nello stesso scenario. Passeggiando lungo le banchine si percepisce come il porto non sia soltanto un monumento del passato, ma un\'infrastruttura viva che continua a rappresentare il cuore economico della città e la più grande azienda della regione. È proprio questa continuità tra storia e presente a rendere Ancona diversa da molte altre città marinare italiane: qui il mare non è soltanto un panorama, ma continua a essere parte integrante della vita quotidiana. Dal porto si possono inoltre ammirare alcuni dei monumenti più importanti della città da una prospettiva privilegiata, con il Duomo che domina il Colle Guasco e gli archi monumentali che raccontano quasi duemila anni di storia.',
+          en:'The Porto Antico is the place where Ancona continues to live its millennial relationship with the sea. Unlike many historic ports transformed exclusively into tourist areas, that of Ancona still preserves an extraordinary vitality today. Commercial ships, ferries to Greece, Croatia and Albania, fishing boats and pleasure craft coexist every day in the same scenario. Walking along the quays, one perceives how the port is not only a monument of the past, but a living infrastructure that continues to represent the economic heart of the city and the largest company in the region. It is precisely this continuity between history and present that makes Ancona different from many other Italian maritime cities: here the sea is not only a panorama, but continues to be an integral part of daily life. From the port you can also admire some of the most important monuments of the city from a privileged perspective, with the Duomo dominating Colle Guasco and the monumental arches that tell almost two thousand years of history.',
+          de:'Der Porto Antico ist der Ort, an dem Ancona ihre jahrtausendealte Beziehung zum Meer weiterlebt. Im Gegensatz zu vielen historischen Häfen, die ausschließlich in Touristengebiete umgewandelt wurden, bewahrt der von Ancona auch heute noch eine außergewöhnliche Vitalität. Handelsschiffe, Fähren nach Griechenland, Kroatien und Albanien, Fischerboote und Sportboote koexistieren jeden Tag im selben Szenario. Beim Spaziergang entlang der Kais spürt man, wie der Hafen nicht nur ein Denkmal der Vergangenheit ist, sondern eine lebendige Infrastruktur, die weiterhin das wirtschaftliche Herz der Stadt und das größte Unternehmen der Region darstellt. Gerade diese Kontinuität zwischen Geschichte und Gegenwart macht Ancona anders als viele andere italienische Seestädte: Hier ist das Meer nicht nur ein Panorama, sondern weiterhin ein integraler Bestandteil des täglichen Lebens. Vom Hafen aus kann man auch einige der wichtigsten Denkmäler der Stadt aus einer privilegierten Perspektive bewundern, mit dem Dom, der den Colle Guasco beherrscht, und den monumentalen Bögen, die fast zweitausend Jahre Geschichte erzählen.',
+          pl:'Porto Antico to miejsce, w którym Ancona nadal żyje swoim tysiącletnim związkiem z morzem. W przeciwieństwie do wielu historycznych portów, które zostały wyłącznie przekształcone w obszary turystyczne, port w Anconie zachowuje do dziś niezwykłą żywotność. Statki handlowe, promy do Grecji, Chorwacji i Albanii, łodzie rybackie i jachty współistnieją każdego dnia w tym samym krajobrazie. Spacerując wzdłuż nabrzeży, wyczuwa się, jak port nie jest tylko zabytkiem przeszłości, ale żywą infrastrukturą, która wciąż stanowi ekonomiczne serce miasta i największe przedsiębiorstwo regionu. To właśnie ta ciągłość między historią a teraźniejszością czyni Ankonę inną niż wiele innych włoskich miast morskich: tutaj morze to nie tylko panorama, ale wciąż integralna część codziennego życia. Z portu można również podziwiać niektóre z najważniejszych zabytków miasta z uprzywilejowanej perspektywy, z katedrą dominującą nad Colle Guasco i monumentalnymi łukami opowiadającymi prawie dwa tysiące lat historii.',
+          lat:43.6160, lon:13.5040, next:'Marina Dorica' },
+        { order:30, name:'Marina Dorica', emoji:'🛥️', photo:'',
+          it:'Marina Dorica è uno dei più grandi porti turistici dell\'Adriatico e rappresenta il lato più moderno della vocazione marinara di Ancona. Qui si alternano barche a vela, yacht, ristoranti e una piacevole passeggiata sul mare, ideale per rilassarsi lontano dal traffico del centro. Inaugurata negli anni Novanta, Marina Dorica è diventata rapidamente uno dei principali approdi turistici del Medio Adriatico. Ospita centinaia di imbarcazioni da diporto provenienti da tutta Europa ed è spesso punto di partenza per regate e manifestazioni veliche internazionali. L\'area è stata progettata non solo come porto, ma anche come spazio aperto alla città. Passeggiando lungo le banchine si possono osservare eleganti barche a vela, yacht i numerose attività legate al mare. Nelle giornate di sole è piacevole fermarsi in uno dei locali affacciati sull\'acqua oppure semplicemente passeggiare ammirando il continuo movimento delle imbarcazioni.',
+          en:'Marina Dorica is one of the largest tourist ports in the Adriatic and represents the most modern side of Ancona\'s maritime vocation. Here sailboats, yachts, restaurants and a pleasant seaside promenade alternate, ideal for relaxing away from the traffic of the centre. Inaugurated in the 1990s, Marina Dorica quickly became one of the main tourist moorings in the Middle Adriatic. It hosts hundreds of pleasure boats from all over Europe and is often the starting point for regattas and international sailing events. The area was designed not only as a port, but also as a space open to the city. Walking along the quays you can observe elegant sailboats, yachts and numerous activities linked to the sea. On sunny days it is pleasant to stop in one of the venues overlooking the water or simply to stroll admiring the continuous movement of the boats.',
+          de:'Marina Dorica ist einer der größten Yachthäfen der Adria und repräsentiert die modernste Seite der maritimen Berufung von Ancona. Hier wechseln sich Segelboote, Yachten, Restaurants und eine angenehme Strandpromenade ab, ideal zum Entspannen abseits des Verkehrs im Zentrum. In den 1990er Jahren eingeweiht, wurde Marina Dorica schnell zu einem der wichtigsten Touristenanleger im mittleren Adriaraum. Sie beherbergt Hunderte von Sportbooten aus ganz Europa und ist oft Ausgangspunkt für Regatten und internationale Segelveranstaltungen. Das Gebiet wurde nicht nur als Hafen, sondern auch als Raum für die Stadt konzipiert. Beim Spaziergang entlang der Kais kann man elegante Segelboote, Yachten und zahlreiche Aktivitäten rund um das Meer beobachten. An sonnigen Tagen ist es angenehm, in einem der Lokale mit Blick auf das Wasser zu verweilen oder einfach zu schlendern und die ständige Bewegung der Boote zu bewundern.',
+          pl:'Marina Dorica to jeden z największych portów turystycznych na Adriatyku i reprezentuje najnowocześniejszą stronę morskiego powołania Ancony. Tutaj na przemian żaglówki, jachty, restauracje i przyjemna nadmorska promenada, idealna do relaksu z dala od ruchu w centrum. Otwarta w latach dziewięćdziesiątych, Marina Dorica szybko stała się jednym z głównych przystani turystycznych na środkowym Adriatyku. Gospodaruje setkami jachtów z całej Europy i jest często punktem wyjścia do regat i międzynarodowych imprez żeglarskich. Obszar został zaprojektowany nie tylko jako port, ale także jako przestrzeń otwarta dla miasta. Spacerując wzdłuż nabrzeży, można obserwować eleganckie żaglówki, jachty i liczne działalności związane z morzem. W słoneczne dni przyjemnie jest zatrzymać się w jednym z lokali z widokiem na wodę lub po prostu spacerować, podziwiając ciągły ruch łodzi.',
+          lat:43.6200, lon:13.5000, next:'Spiaggia di Mezzavalle' },
+        { order:31, name:'Spiaggia di Mezzavalle', emoji:'🏖️', photo:'',
+          it:'Mezzavalle è una delle spiagge più spettacolari delle Marche. Selvaggia e priva di stabilimenti balneari, conserva un ambiente naturale quasi incontaminato, con acque limpide, falesie bianche e macchia mediterranea che arriva a lambire una lunga spiaggia di ciottoli. Raggiungibile esclusivamente a piedi attraverso un ripido sentiero panoramico oppure via mare, Mezzavalle offre un\'esperienza completamente diversa rispetto alle spiagge più attrezzate della Riviera del Conero. La spiaggia si estende per oltre un chilometro ai piedi della falesia e regala panorami di rara bellezza. Le acque, generalmente limpide e trasparenti, invitano a fare snorkeling e lunghe nuotate. Proprio l\'assenza di strutture turistiche ha permesso a questo luogo di mantenere il suo fascino originario. È consigliabile arrivare con acqua, cibo e tutto il necessario per la giornata.',
+          en:'Mezzavalle is one of the most spectacular beaches in the Marche region. Wild and without bathing establishments, it preserves an almost untouched natural environment, with clear waters, white cliffs and Mediterranean scrub that reaches a long pebble beach. Reachable exclusively on foot via a steep panoramic path or by sea, Mezzavalle offers a completely different experience compared to the more equipped beaches of the Conero Riviera. The beach extends for over a kilometre at the foot of the cliff and offers panoramas of rare beauty. The waters, generally clear and transparent, invite snorkelling and long swims. It is precisely the absence of tourist structures that has allowed this place to maintain its original charm. It is advisable to arrive with water, food and everything needed for the day.',
+          de:'Mezzavalle ist einer der spektakulärsten Strände der Marken. Wild und ohne Badeanstalten bewahrt er eine fast unberührte natürliche Umgebung mit klarem Wasser, weißen Klippen und mediterranem Buschwerk, das einen langen Kiesstrand erreicht. Exklusiv zu Fuß über einen steilen Panoramaweg oder per Boot erreichbar, bietet Mezzavalle ein völlig anderes Erlebnis im Vergleich zu den besser ausgestatteten Stränden der Riviera del Conero. Der Strand erstreckt sich über mehr als einen Kilometer am Fuß der Klippe und bietet Panoramen von seltener Schönheit. Das Wasser, im Allgemeinen klar und transparent, lädt zum Schnorcheln und langen Schwimmen ein. Gerade das Fehlen von touristischen Strukturen hat es diesem Ort ermöglicht, seinen ursprünglichen Charme zu bewahren. Es ist ratsam, mit Wasser, Essen und allem für den Tag Notwendigen anzureisen.',
+          pl:'Mezzavalle to jedna z najbardziej spektakularnych plaż w regionie Marche. Dzika i pozbawiona zakładów kąpielowych, zachowuje niemal nietknięte naturalne środowisko, z krystaliczną wodą, białymi klifami i zaroślami śródziemnomorskimi sięgającymi długiej plaży z kamykami. Dostępna wyłącznie pieszo przez stromą ścieżkę panoramiczną lub drogą morską, Mezzavalle oferuje zupełnie inne doświadczenie w porównaniu do bardziej wyposażonych plaż Riwiery Conero. Plaża rozciąga się na ponad kilometr u podnóża klifu i oferuje panoramy rzadkiej urody. Wody, zazwyczaj czyste i przejrzyste, zachęcają do snorkelingu i długich pływań. To właśnie brak struktur turystycznych pozwolił temu miejscu zachować swój pierwotny urok. Zaleca się przyjazd z wodą, jedzeniem i wszystkim, co potrzebne na cały dzień.',
+          lat:43.5500, lon:13.6000, next:'Baia di Portonovo' },
+        { order:32, name:'Baia di Portonovo', emoji:'🏝️', photo:'portonovo.jpg',
+          it:'Incastonata tra il Monte Conero e il mare Adriatico, Portonovo è una delle baie più affascinanti d\'Italia. Natura, mare cristallino, storia e ottima cucina si incontrano in uno scenario unico. Protetta dalle pendici del Monte Conero, la baia conserva un paesaggio rimasto sorprendentemente intatto. Le spiagge di ciottoli bianchi, l\'acqua limpida, zielona macchia mediterranea interrotta da due laghetti di acqua salmastra creano un ambiente di straordinaria bellezza. Qui sorgono alcuni dei ristoranti di pesce più rinomati della zona, insieme allo storico Fortino Napoleonico, alla Torre De Bosis e alla suggestiva Chiesa di Santa Maria di Portonovo. Portonovo è perfetta sia per una giornata di mare sia come punto di partenza per escursioni sul Conero. Vi si trovano stabilimenti balneari attrezzati alternati a tratti di spiaggia libera particolarmente apprezzati dagli anconetani. D\'estate i parcheggi presenti si esauriscono molto presto, ma a monte è dostępny un parcheggio molto ampio servito da una comoda navetta gratuita. È anche possibile arrivarci con il comodo bus 94 che collega la stazione di Ancona e la piazzetta di Portonovo passando per piazza Cavour.',
+          en:'Nestled between Monte Conero and the Adriatic Sea, Portonovo is one of the most fascinating bays in Italy. Nature, crystal-clear sea, history and excellent cuisine meet in a unique setting. Protected by the slopes of Monte Conero, the bay preserves a landscape that has remained surprisingly intact. The white pebble beaches, clear water, green Mediterranean scrub interrupted by two brackish water ponds create an environment of extraordinary beauty. Here are some of the most renowned fish restaurants in the area, together with the historic Fortino Napoleonico, the Torre De Bosis and the evocative Chiesa di Santa Maria di Portonovo. Portonovo is perfect both for a day at the beach and as a starting point for excursions on the Conero. There are equipped bathing establishments alternating with stretches of free beach particularly appreciated by the people of Ancona. In summer the available car parks fill up very quickly, but there is a very large car park uphill served by a convenient free shuttle. It is also possible to get there with the convenient bus 94 connecting Ancona station and the Portonovo square passing through Piazza Cavour.',
+          de:'Eingebettet zwischen dem Monte Conero und der Adria ist Portonovo eine der faszinierendsten Buchten Italiens. Natur, kristallklares Meer, Geschichte und exzellente Küche treffen in einer einzigartigen Kulisse aufeinander. Geschützt von den Hängen des Monte Conero bewahrt die Bucht eine Landschaft, die erstaunlich intakt geblieben ist. Die weißen Kiesstrände, das klare Wasser, das grüne mediterrane Buschwerk, unterbrochen von zwei Brackwasserteichen, schaffen eine Umgebung von außergewöhnlicher Schönheit. Hier befinden sich einige der renommiertesten Fischrestaurants der Gegend, zusammen mit dem historischen Fortino Napoleonico, dem Torre De Bosis und der eindrucksvollen Chiesa di Santa Maria di Portonovo. Portonovo ist sowohl für einen Tag am Strand als auch als Ausgangspunkt für Ausflüge auf den Conero perfekt. Es gibt ausgestattete Badeanstalten, die sich mit Strecken von freiem Strand abwechseln, die von den Anconetanern besonders geschätzt werden. Im Sommer füllen sich die vorhandenen Parkplätze sehr schnell, aber es gibt einen sehr großen Parkplatz bergauf, der von einem bequemen kostenlosen Shuttle bedient wird. Man kann auch mit dem bequemen Bus 94 dorthin gelangen, der den Bahnhof von Ancona und den Platz von Portonovo verbindet und über die Piazza Cavour führt.',
+          pl:'Położona pomiędzy Monte Conero a Morzem Adriatyckim, Portonovo to jedna z najbardziej fascynujących zatok we Włoszech. Natura, krystalicznie czyste morze, historia i znakomita kuchnia spotykają się w wyjątkowym otoczeniu. Chroniona przez stoki Monte Conero, zatoka zachowuje krajobraz, który pozostał zadziwiająco nietknięty. Białe plaże z kamykami, czysta woda, zielone zarośla śródziemnomorskie przerywane przez dwa stawy z wodą słonawą tworzą środowisko o niezwykłej urodzie. Tutaj znajdują się niektóre z najbardziej renomowanych restauracji rybnych w okolicy, wraz z historycznym Fortino Napoleonico, Torre De Bosis i sugestywną Chiesa di Santa Maria di Portonovo. Portonovo jest idealne zarówno na dzień na plaży, jak i jako punkt wyjścia do wycieczek na Conero. Znajdują się tu wyposażone zakłady kąpielowe na przemian z odcinkami wolnej plaży szczególnie cenionymi przez mieszkańców Ancony. Latem dostępne parkingi szybko się zapełniają, ale na górze dostępny jest bardzo duży parking obsługiwany przez wygodny bezpłatny autobus. Można tam dojechać także wygodnym autobusem 94 łączącym stację Ancony i mały plac Portonovo, przejeżdżając przez Piazza Cavour.',
+          lat:43.5500, lon:13.6200, next:'Chiesa di Santa Maria di Portonovo' },
+        { order:33, name:'Chiesa di Santa Maria di Portonovo', emoji:'⛪', photo:'',
+          it:'Affacciata direttamente sul mare, la Chiesa di Santa Maria di Portonovo è uno dei monumenti romanici più suggestivi delle Marche. Costruita nell\'XI secolo dai monaci benedettini, la chiesa unisce elementi romanici, bizantini e paleocristiani, creando un edificio unico nel suo genere. La posizione, a pochi metri dalla spiaggia, rende questo luogo particolarmente suggestivo. Nel corso dei secoli terremoti e frane hanno modificato il paesaggio circostante, ma la chiesa continua a rappresentare uno dei simboli della baia. L\'interno, semplice ed essenziale, invita al silenzio e alla contemplazione.',
+          en:'Overlooking the sea directly, the Chiesa di Santa Maria di Portonovo is one of the most evocative Romanesque monuments in the Marche. Built in the 11th century by Benedictine monks, the church combines Romanesque, Byzantine and Paleo-Christian elements, creating a unique building of its kind. The position, a few metres from the beach, makes this place particularly evocative. Over the centuries earthquakes and landslides have changed the surrounding landscape, but the church continues to represent one of the symbols of the bay. The interior, simple and essential, invites silence and contemplation.',
+          de:'Direkt am Meer gelegen, ist die Chiesa di Santa Maria di Portonovo eines der eindrucksvollsten romanischen Denkmäler der Marken. Im 11. Jahrhundert von Benediktinermönchen erbaut, vereint die Kirche romanische, byzantinische und frühchristliche Elemente und schafft so ein einzigartiges Gebäude ihrer Art. Die Lage, nur wenige Meter vom Strand entfernt, macht diesen Ort besonders eindrucksvoll. Im Laufe der Jahrhunderte haben Erdbeben und Erdrutsche die umgebende Landschaft verändert, aber die Kirche bleibt eines der Symbole der Bucht. Das Innere, schlicht und wesentlich, lädt zur Stille und Kontemplation ein.',
+          pl:'Wychodząca bezpośrednio na morze, Chiesa di Santa Maria di Portonovo to jeden z najbardziej sugestywnych zabytków romańskich w regionie Marche. Zbudowana w XI wieku przez mnichów benedyktyńskich, kościół łączy elementy romańskie, bizantyńskie i paleochrześcijańskie, tworząc unikalny budynek w swoim rodzaju. Położenie, zaledwie kilka metrów od plaży, czyni to miejsce szczególnie sugestywnym. W ciągu wieków trzęsienia ziemi i osuwiska zmieniły otaczający krajobraz, ale kościół wciąż pozostaje jednym z symboli zatoki. Wnętrze, proste i ascetyczne, zachęca do ciszy i kontemplacji.',
+          lat:43.5480, lon:13.6220, next:'Fortino Napoleonico' },
+        { order:34, name:'Fortino Napoleonico', emoji:'🏰', photo:'',
+          it:'Costruito all\'inizio dell\'Ottocento per difendere la baia, il Fortino Napoleonico è oggi uno degli edifici storici più caratteristici di Portonovo. Il fortino fu realizzato durante il Regno d\'Italia napoleonico per controllare la costa e contrastare eventuali sbarchi nemici. La struttura, perfettamente integrata nel paesaggio, ha cambiato più volte destinazione nel corso dei secoli fino a essere trasformata nell\'attuale struttura ricettiva. Passeggiando nei suoi dintorni si percepisce chiaramente il valore strategico che questa baia aveva per il controllo dell\'Adriatico.',
+          en:'Built at the beginning of the 19th century to defend the bay, the Fortino Napoleonico is today one of the most characteristic historic buildings in Portonovo. The fort was built during the Napoleonic Kingdom of Italy to control the coast and counter any enemy landings. The structure, perfectly integrated into the landscape, has changed its purpose several times over the centuries until being transformed into the current accommodation facility. Walking in its surroundings, one clearly perceives the strategic value that this bay had for the control of the Adriatic.',
+          de:'Anfang des 19. Jahrhunderts zur Verteidigung der Bucht erbaut, ist das Fortino Napoleonico heute eines der charakteristischsten historischen Gebäude von Portonovo. Das Fort wurde während des napoleonischen Königreichs Italien erbaut, um die Küste zu kontrollieren und feindliche Landungen abzuwehren. Die Struktur, perfekt in die Landschaft integriert, hat im Laufe der Jahrhunderte mehrmals ihre Bestimmung geändert, bis sie in die heutige Unterkunftseinrichtung umgewandelt wurde. Beim Spaziergang in der Umgebung spürt man deutlich den strategischen Wert, den diese Bucht für die Kontrolle der Adria hatte.',
+          pl:'Zbudowany na początku XIX wieku w celu obrony zatoki, Fortino Napoleonico jest dziś jednym z najbardziej charakterystycznych zabytkowych budynków w Portonovo. Fort został zbudowany podczas napoleońskiego Królestwa Włoch, aby kontrolować wybrzeże i przeciwdziałać ewentualnym desantom wroga. Struktura, doskonale zintegrowana z krajobrazem, zmieniała swoje przeznaczenie wielokrotnie w ciągu wieków, aż do przekształcenia w obecną strukturę hotelową. Spacerując w okolicy, wyraźnie wyczuwa się strategiczną wartość, jaką ta zatoka miała dla kontroli Adriatyku.',
+          lat:43.5490, lon:13.6230, next:'Lago Grande di Portonovo' },
+        { order:35, name:'Lago Grande di Portonovo', emoji:'🦆', photo:'',
+          it:'Il Lago Grande è uno dei rarissimi laghi costieri salmastri dell\'Adriatico. Separato dal mare da cienka warstwa ziemi, ospita un ecosistema di grande valore naturalistico. Le sue acque, alimentate sia da sorgenti sia dal mare, costituiscono un habitat ideale per numerose specie di uccelli acquatici e piante tipiche degli ambienti salmastri. Passeggiando lungo il sentiero che costeggia il lago è possibile osservare aironi, folaghe e altre specie migratorie che sostano durante l\'anno. Questo piccolo angolo di natura rappresenta uno degli aspetti meno conosciuti ma più interessanti della baia di Portonovo.',
+          en:'The Lago Grande is one of the very rare brackish coastal lakes of the Adriatic. Separated from the sea by a thin strip of land, it hosts an ecosystem of great naturalistic value. Its waters, fed by both springs and the sea, constitute an ideal habitat for numerous species of water birds and plants typical of brackish environments. Walking along the path that skirts the lake, it is possible to observe herons, coots and other migratory species that stop during the year. This small corner of nature represents one of the lesser known but most interesting aspects of the Portonovo bay.',
+          de:'Der Lago Grande ist einer der sehr seltenen brackigen Küstenseen der Adria. Durch einen dünnen Landstreifen vom Meer getrennt, beherbergt er ein Ökosystem von großem naturwissenschaftlichen Wert. Seine Gewässer, gespeist sowohl von Quellen als auch vom Meer, bilden einen idealen Lebensraum für zahlreiche Wasservogelarten und Pflanzen, die für brackige Umgebungen typisch sind. Beim Spaziergang entlang des Weges, der den See säumt, kann man Reiher, Blässhühner und andere Zugvogelarten beobachten, die während des Jahres Rast machen. Diese kleine Naturoase stellt einen der weniger bekannten, aber interessantesten Aspekte der Bucht von Portonovo dar.',
+          pl:'Lago Grande to jedno z bardzo rzadkich przybrzeżnych jezior słonawych na Adriatyku. Oddzielone od morza cienką warstwą ziemi, gospodaruje ekosystemem o wielkiej wartości przyrodniczej. Jego wody, zasilane zarówno przez źródła, jak i morze, stanowią idealne siedlisko dla licznych gatunków ptaków wodnych i roślin typowych dla środowisk słonawych. Spacerując wzdłuż ścieżki wokół jeziora, można obserwować czaple, łyski i inne gatunki wędrowne, które zatrzymują się w ciągu roku. Ten mały zakątek natury reprezentuje jeden z mniej znanych, ale najbardziej interesujących aspektów zatoki Portonovo.',
+          lat:43.5470, lon:13.6240, next:'Lago Profondo di Portonovo' },
+        { order:36, name:'Lago Profondo di Portonovo', emoji:'🌿', photo:'',
+          it:'Più piccolo e meno conosciuto del vicino Lago Grande, il Lago Profondo è un prezioso ambiente naturale immerso nella vegetazione della baia di Portonovo. La sua tranquillità lo rende uno dei luoghi più suggestivi per gli amanti della natura. Il Lago Profondo si è formato grazie all\'incontro tra acque dolci di falda e infiltrazioni marine, creando un ecosistema delicato e ricco di biodiversità. Pur essendo meno accessibile rispetto al Lago Grande, rappresenta un\'importante area naturalistica protetta. L\'ambiente circostante ospita canneti, vegetazione mediterranea i numerose specie di uccelli, insetti i anfibi. Passeggiando nei dintorni si percepisce un\'atmosfera completamente diversa da quella della spiaggia: qui dominano il silenzio i suoni della natura. La sua conservazione è fondamentale per l\'equilibrio ambientale della baia.',
+          en:'Smaller and less known than the nearby Lago Grande, the Lago Profondo is a precious natural environment immersed in the vegetation of the Portonovo bay. Its tranquillity makes it one of the most evocative places for nature lovers. The Lago Profondo was formed by the meeting of groundwater and marine infiltrations, creating a delicate ecosystem rich in biodiversity. Although less accessible than the Lago Grande, it represents an important protected naturalistic area. The surrounding environment hosts reed beds, Mediterranean vegetation and numerous species of birds, insects and amphibians. Walking in the surroundings, one perceives an atmosphere completely different from that of the beach: here silence and the sounds of nature dominate. Its conservation is fundamental for the environmental balance of the bay.',
+          de:'Kleiner und weniger bekannt als der nahegelegene Lago Grande, ist der Lago Profondo eine wertvolle natürliche Umgebung, eingetaucht in die Vegetation der Bucht von Portonovo. Seine Ruhe macht ihn zu einem der eindrucksvollsten Orte für Naturliebhaber. Der Lago Profondo entstand durch das Zusammentreffen von Grundwasser und marinen Infiltrationen und schuf ein empfindliches Ökosystem mit großer Artenvielfalt. Obwohl weniger zugänglich als der Lago Grande, stellt er ein wichtiges geschütztes Naturgebiet dar. Die umgebende Umgebung beherbergt Schilfbestände, mediterrane Vegetation und zahlreiche Vogel-, Insekten- und Amphibienarten. Beim Spaziergang in der Umgebung spürt man eine völlig andere Atmosphäre als am Strand: Hier dominieren Stille und die Geräusche der Natur. Sein Erhalt ist fundamental für das ökologische Gleichgewicht der Bucht.',
+          pl:'Mniejsze i mniej znane niż pobliskie Lago Grande, Lago Profondo to cenny naturalny środowisko zanurzone w roślinności zatoki Portonovo. Jego spokój czyni je jednym z najbardziej sugestywnych miejsc dla miłośników natury. Lago Profondo powstało w wyniku spotkania wód gruntowych z infiltracjami morskimi, tworząc delikatny ekosystem bogaty w różnorodność biologiczną. Choć mniej dostępne niż Lago Grande, reprezentuje ważny chroniony obszar przyrodniczy. Otoczenie gospodaruje trzcinowiskami, roślinnością śródziemnomorską i licznymi gatunkami ptaków, owadów i płazów. Spacerując w okolicy, wyczuwa się zupełnie inną atmosferę niż na plaży: tutaj dominują cisza i dźwięki natury. Jego ochrona jest fundamentalna dla równowagi środowiskowej zatoki.',
+          lat:43.5460, lon:13.6250, next:'Belvedere di Portonovo' },
+        { order:37, name:'Belvedere di Portonovo', emoji:'🌄', photo:'',
+          it:'Il Belvedere di Portonovo regala una delle viste più spettacolari della Riviera del Conero. Da qui lo sguardo abbraccia l\'intera baia, il mare Adriatico e le alte falesie che caratterizzano questo tratto di costa. Situato lungo la strada panoramica che scende verso Portonovo, il belvedere è una tappa quasi obbligata per chi visita la zona. Dall\'alto si distinguono perfettamente la Chiesa di Santa Maria, il Fortino Napoleonico, la Torre De Bosis, i due laghi costieri e la lunga spiaggia di ciottoli che si sviluppa ai piedi del Monte Conero.',
+          en:'The Belvedere di Portonovo offers one of the most spectacular views of the Conero Riviera. From here the gaze embraces the entire bay, the Adriatic Sea and the high cliffs that characterise this stretch of coast. Located along the panoramic road that descends towards Portonovo, the belvedere is an almost obligatory stop for those visiting the area. From above, the Chiesa di Santa Maria, the Fortino Napoleonico, the Torre De Bosis, the two coastal lakes and the long pebble beach that stretches at the foot of Monte Conero can be perfectly distinguished.',
+          de:'Der Belvedere di Portonovo bietet einen der spektakulärsten Ausblicke auf die Riviera del Conero. Von hier umfasst der Blick die gesamte Bucht, die Adria und die hohen Klippen, die diesen Küstenabschnitt charakterisieren. Entlang der Panoramastraße, die nach Portonovo hinabführt, ist der Belvedere ein fast obligatorischer Halt für alle, die die Gegend besuchen. Von oben sind die Chiesa di Santa Maria, das Fortino Napoleonico, der Torre De Bosis, die beiden Küstenseen und der lange Kiesstrand, der sich am Fuß des Monte Conero erstreckt, perfekt zu erkennen.',
+          pl:'Belvedere di Portonovo oferuje jeden z najbardziej spektakularnych widoków na Riwierę Conero. Stąd wzrok obejmuje całą zatokę, Morze Adriatyckie i wysokie klify charakteryzujące ten odcinek wybrzeża. Położone wzdłuż drogi panoramicznej prowadzącej w dół do Portonovo, belvedere jest niemal obowiązkowym przystankiem dla osób odwiedzających okolicę. Z góry doskonale widać Chiesa di Santa Maria, Fortino Napoleonico, Torre De Bosis, dwa jeziora przybrzeżne i długą plażę z kamykami rozciągającą się u podnóża Monte Conero.',
+          lat:43.5463, lon:13.6271, next:'Spiaggia delle Due Sorelle' },
+        { order:38, name:'Spiaggia delle Due Sorelle', emoji:'🏖️', photo:'',
+          it:'La Spiaggia delle Due Sorelle è considerata una delle più belle d\'Italia. Selvaggia, incontaminata e raggiungibile esclusivamente via mare, prende il nome dai due caratteristici faraglioni bianchi che emergono dall\'acqua. Ai piedi delle imponenti falesie del Monte Conero si apre questa spettacolare spiaggia di ciottoli bianchi, lambita da un mare trasparente dai colori che variano dal turchese al blu intenso. L\'assenza di edifici e strade ha permesso di conservare un ambiente naturale praticamente intatto. Durante l\'estate è raggiungibile con i battelli in partenza da Numana o Portonovo, oppure con escursioni organizzate. Le Due Sorelle rappresentano il simbolo naturalistico della Riviera del Conero e sono uno dei luoghi più fotografati delle Marche.',
+          en:'The Spiaggia delle Due Sorelle is considered one of the most beautiful in Italy. Wild, untouched and reachable exclusively by sea, it takes its name from the two characteristic white sea stacks that emerge from the water. At the foot of the imposing cliffs of Monte Conero opens this spectacular white pebble beach, lapped by a transparent sea with colours ranging from turquoise to deep blue. The absence of buildings and roads has allowed an almost intact natural environment to be preserved. During the summer it is reachable by boats departing from Numana or Portonovo, or with organised excursions. The Due Sorelle represent the naturalistic symbol of the Conero Riviera and are one of the most photographed places in the Marche.',
+          de:'Der Spiaggia delle Due Sorelle gilt als einer der schönsten Italiens. Wild, unberührt und ausschließlich per Boot erreichbar, verdankt er seinen Namen den zwei charakteristischen weißen Felsnadeln, die aus dem Wasser ragen. Am Fuß der imposanten Klippen des Monte Conero öffnet sich dieser spektakuläre weiße Kiesstrand, umspült von einem transparenten Meer mit Farben, die von Türkis bis tiefem Blau reichen. Das Fehlen von Gebäuden und Straßen hat es ermöglicht, eine nahezu intakte natürliche Umgebung zu bewahren. Im Sommer ist er mit Booten erreichbar, die von Numana oder Portonovo abfahren, oder mit organisierten Ausflügen. Die Due Sorelle repräsentieren das naturwissenschaftliche Symbol der Riviera del Conero und sind einer der meistfotografierten Orte in den Marken.',
+          pl:'Spiaggia delle Due Sorelle jest uważana za jedną z najpiękniejszych we Włoszech. Dzika, nietknięta i dostępna wyłącznie drogą morską, zawdzięcza swoją nazwę dwóm charakterystycznym białym skałom wystającym z wody. U podnóża imponujących klifów Monte Conero otwiera się ta spektakularna biała plaża z kamykami, omywana przez przejrzyste morze w kolorach od turkusu po głęboki błękit. Brak budynków i dróg pozwolił zachować niemal nietknięte naturalne środowisko. Latem można do niej dotrzeć łodziami wypływającymi z Numana lub Portonovo, lub zorganizowanymi wycieczkami. Due Sorelle reprezentują symbol przyrodniczy Riwiery Conero i są jednym z najczęściej fotografowanych miejsc w regionie Marche.',
+          lat:43.5463, lon:13.6271, next:'Spiaggia di San Michele' },
+        { order:39, name:'Spiaggia di San Michele', emoji:'🏖️', photo:'',
+          it:'La Spiaggia di San Michele è una delle spiagge più apprezzate della Riviera del Conero. Circondata dalla macchia mediterranea, offre un perfetto equilibrio tra servizi, natura e mare cristallino. Situata tra Sirolo e la Spiaggia delle Due Sorelle, San Michele è raggiungibile attraverso sentieri immersi nel verde oppure con bus navetta durante la stagione estiva. La spiaggia alterna tratti liberi e stabilimenti balneari, risultando ideale sia per chi cerca relax sia per chi desidera praticare snorkeling grazie alla limpidezza dell\'acqua. Le alte pareti del Monte Conero proteggono questo tratto di costa, creando un ambiente particolarmente suggestivo.',
+          en:'The Spiaggia di San Michele is one of the most appreciated beaches of the Conero Riviera. Surrounded by Mediterranean scrub, it offers a perfect balance between services, nature and crystal-clear sea. Located between Sirolo and the Spiaggia delle Due Sorelle, San Michele is reachable through paths immersed in greenery or by shuttle bus during the summer season. The beach alternates between free stretches and bathing establishments, making it ideal both for those seeking relaxation and for those who want to practice snorkelling thanks to the clarity of the water. The high walls of Monte Conero protect this stretch of coast, creating a particularly evocative environment.',
+          de:'Der Spiaggia di San Michele ist einer der beliebtesten Strände der Riviera del Conero. Umgeben von mediterranem Buschwerk, bietet er ein perfektes Gleichgewicht zwischen Service, Natur und kristallklarem Meer. Zwischen Sirolo und dem Spiaggia delle Due Sorelle gelegen, ist San Michele über Wege, die in Grün eingetaucht sind, oder mit einem Shuttlebus während der Sommersaison erreichbar. Der Strand wechselt sich zwischen freien Abschnitten und Badeanstalten ab, was ihn sowohl für diejenigen ideal macht, die Entspannung suchen, als auch für diejenigen, die dank der Klarheit des Wassers schnorcheln möchten. Die hohen Wände des Monte Conero schützen diesen Küstenabschnitt und schaffen eine besonders eindrucksvolle Umgebung.',
+          pl:'Spiaggia di San Michele to jedna z najbardziej cenionych plaż Riwiery Conero. Otoczona zaroślami śródziemnomorskimi, oferuje idealną równowagę między usługami, naturą i krystalicznym morzem. Położona między Sirolo a Spiaggia delle Due Sorelle, San Michele jest dostępna przez ścieżki zanurzone w zieleni lub autobusem wahadłowym w sezonie letnim. Plaża na przemian ma odcinki wolne i zakłady kąpielowe, co czyni ją idealną zarówno dla tych, którzy szukają relaksu, jak i dla tych, którzy chcą uprawiać snorkeling dzięki przejrzystości wody. Wysokie ściany Monte Conero chronią ten odcinek wybrzeża, tworząc szczególnie sugestywne otoczenie.',
+          lat:43.5450, lon:13.6280, next:'Spiaggia dei Sassi Neri' },
+        { order:40, name:'Spiaggia dei Sassi Neri', emoji:'🪨', photo:'',
+          it:'Selvaggia e scenografica, la Spiaggia dei Sassi Neri deve il suo nome ai caratteristici ciottoli scuri che la distinguono dalle altre spiagge del Conero. Più tranquilla rispetto alla vicina San Michele, questa spiaggia è particolarmente amata da chi cerca un contatto diretto con la natura. Le acque profonde e trasparenti la rendono ideale per il nuoto e lo snorkeling, podczas gdy panorama dominata dalle falesie regala scorci spettacolari in ogni stagione. È consigliata a chi desidera trascorrere qualche ora lontano dalle spiagge più affollate.',
+          en:'Wild and scenic, the Spiaggia dei Sassi Neri owes its name to the characteristic dark pebbles that distinguish it from the other beaches of the Conero. Quieter than the nearby San Michele, this beach is particularly loved by those seeking direct contact with nature. The deep and transparent waters make it ideal for swimming and snorkelling, while the panorama dominated by the cliffs offers spectacular glimpses in every season. It is recommended for those who wish to spend a few hours away from the most crowded beaches.',
+          de:'Wild und malerisch verdankt der Spiaggia dei Sassi Neri seinen Namen den charakteristischen dunklen Kieseln, die ihn von den anderen Stränden des Conero unterscheiden. Ruhiger als der nahegelegene San Michele, ist dieser Strand besonders bei denjenigen beliebt, die direkten Kontakt mit der Natur suchen. Die tiefen und klaren Gewässer machen ihn ideal zum Schwimmen und Schnorcheln, während das von den Klippen dominierte Panorama in jeder Jahreszeit spektakuläre Ausblicke bietet. Er wird denjenigen empfohlen, die einige Stunden abseits der überfülltesten Strände verbringen möchten.',
+          pl:'Dzika i malownicza, Spiaggia dei Sassi Neri zawdzięcza swoją nazwę charakterystycznym ciemnym kamykom, które wyróżniają ją spośród innych plaż Conero. Spokojniejsza niż pobliska San Michele, ta plaża jest szczególnie lubiana przez tych, którzy szukają bezpośredniego kontaktu z naturą. Głębokie i przejrzyste wody czynią ją idealną do pływania i snorkelingu, podczas gdy panorama zdominowana przez klify oferuje spektakularne widoki w każdej porze roku. Jest polecana tym, którzy chcą spędzić kilka godzin z dala od najbardziej zatłoczonych plaż.',
+          lat:43.5440, lon:13.6290, next:'Sirolo' },
+        { order:41, name:'Sirolo', emoji:'🏘️', photo:'',
+          it:'Arroccato su un balcone naturale affacciato sul mare, Sirolo è uno dei borghi più belli delle Marche. Vicoli fioriti, piazze panoramiche e scorci sul Conero lo rendono una meta imperdibile. Di origine medievale, Sirolo conserva ancora oggi fascino di un piccolo borgo fortificato. Passeggiando tra le strette vie del centro si incontrano botteghe artigiane, ristoranti, caffè i terrazze panoramiche che si aprono sul mare. La celebre Piazza Vittorio Veneto è il cuore del paese i offre una vista straordinaria sulla costa del Conero. Da qui si comprende perfettamente perché Sirolo sia considerato uno dei luoghi più suggestivi dell\'Adriatico. Durante l\'estate il borgo si anima z koncertami, mercatini i manifestazioni culturali che ne rendono ancora più piacevole la visita.',
+          en:'Perched on a natural balcony overlooking the sea, Sirolo is one of the most beautiful villages in the Marche. Flower-filled alleys, panoramic squares and glimpses of the Conero make it an unmissable destination. Of medieval origin, Sirolo still preserves the charm of a small fortified village. Walking through the narrow streets of the centre you come across artisan workshops, restaurants, cafés and panoramic terraces overlooking the sea. The famous Piazza Vittorio Veneto is the heart of the village and offers an extraordinary view of the Conero coast. From here one can perfectly understand why Sirolo is considered one of the most evocative places on the Adriatic. During the summer the village comes alive with concerts, markets and cultural events that make the visit even more enjoyable.',
+          de:'Auf einem natürlichen Balkon mit Blick auf das Meer thronend, ist Sirolo eines der schönsten Dörfer der Marken. Blumengeschmückte Gassen, Panoramaplätze und Ausblicke auf den Conero machen es zu einem unverzichtbaren Ziel. Mittelalterlichen Ursprungs bewahrt Sirolo noch heute den Charme eines kleinen befestigten Dorfes. Beim Spaziergang durch die engen Gassen des Zentrums stößt man auf Handwerkswerkstätten, Restaurants, Cafés und Panoramaterrassen mit Blick auf das Meer. Der berühmte Piazza Vittorio Veneto ist das Herz des Dorfes und bietet einen außergewöhnlichen Blick auf die Küste des Conero. Von hier aus versteht man perfekt, warum Sirolo als einer der eindrucksvollsten Orte an der Adria gilt. Während des Sommers erwacht das Dorf mit Konzerten, Märkten und kulturellen Veranstaltungen zum Leben, die den Besuch noch angenehmer machen.',
+          pl:'Usytuowane na naturalnym balkonie z widokiem na morze, Sirolo to jedna z najpiękniejszych wiosek w regionie Marche. Ukwiecone alejki, panoramiczne place i widoki na Conero czynią je niezastąpionym celem. Pochodzące ze średniowiecza, Sirolo wciąż zachowuje urok małej ufortyfikowanej wioski. Spacerując wąskimi uliczkami centrum, natrafia się na warsztaty rzemieślnicze, restauracje, kawiarnie i tarasy panoramiczne z widokiem na morze. Słynny Piazza Vittorio Veneto to serce wioski i oferuje niezwykły widok na wybrzeże Conero. Stąd doskonale widać, dlaczego Sirolo jest uważane za jedno z najbardziej sugestywnych miejsc na Adriatyku. Latem wioska ożywa koncertami, targami i wydarzeniami kulturalnymi, które czynią wizytę jeszcze przyjemniejszą.',
+          lat:43.5400, lon:13.6300, next:'Numana' },
+        { order:42, name:'Numana', emoji:'⚓', photo:'',
+          it:'Antico borgo marinaro affacciato sull\'Adriatico, Numana unisce il fascino della tradizione marinara alle spiagge più ampie e attrezzate della Riviera del Conero. È una meta ideale per famiglie, coppie i amanti del mare. Conosciuta nell\'antichità come importante approdo dei Piceni, Numana conserva ancora oggi un forte legame con il mare. Il centro storico si sviluppa sulla parte alta del promontorio i offre scorci panoramici, vicoli caratteristici i piazzette affacciate sulla costa. Scendendo verso il porto si incontra la parte più vivace della città, dove pescherecci, imbarcazioni da diporto i locali sul lungomare raccontano la tradizione marittima locale. Numana rappresenta inoltre uno dei principali punti di partenza per escursioni in barca lungo la costa del Conero.',
+          en:'Ancient fishing village overlooking the Adriatic, Numana combines the charm of maritime tradition with the widest and best-equipped beaches of the Conero Riviera. It is an ideal destination for families, couples and sea lovers. Known in antiquity as an important landing place of the Piceni, Numana still preserves a strong bond with the sea today. The historic centre develops on the upper part of the promontory and offers panoramic glimpses, characteristic alleys and small squares overlooking the coast. Going down towards the port you meet the liveliest part of the city, where fishing boats, pleasure craft and venues on the seafront tell of the local maritime tradition. Numana is also one of the main starting points for boat excursions along the Conero coast.',
+          de:'Altes Fischerdorf mit Blick auf die Adria vereint Numana den Charme der maritimen Tradition mit den breitesten und bestausgestatteten Stränden der Riviera del Conero. Es ist ein ideales Ziel für Familien, Paare und Meeresliebhaber. In der Antike als wichtiger Landeplatz der Picener bekannt, bewahrt Numana auch heute noch eine starke Bindung zum Meer. Das historische Zentrum entwickelt sich auf dem oberen Teil des Vorgebirges und bietet Panoramablicke, charakteristische Gassen und kleine Plätze mit Blick auf die Küste. Wenn man zum Hafen hinuntergeht, trifft man auf den lebhaftesten Teil der Stadt, wo Fischerboote, Sportboote und Lokale an der Uferpromenade von der lokalen maritimen Tradition erzählen. Numana ist auch einer der wichtigsten Ausgangspunkte für Bootsausflüge entlang der Küste des Conero.',
+          pl:'Stara wioska rybacka z widokiem na Adriatyk, Numana łączy urok tradycji morskiej z najszerszymi i najlepiej wyposażonymi plażami Riwiery Conero. To idealne miejsce dla rodzin, par i miłośników morza. Znana w starożytności jako ważny przystanek Piceni, Numana wciąż zachowuje silną więź z morzem. Historyczne centrum rozciąga się na górnej części półwyspu i oferuje panoramiczne widoki, charakterystyczne alejki i małe place z widokiem na wybrzeże. Schodząc w kierunku portu, spotyka się najbardziej tętniącą życiem część miasta, gdzie łodzie rybackie, jachty i lokale na nabrzeżu opowiadają o lokalnej tradycji morskiej. Numana jest również jednym z głównych punktów wyjścia do wycieczek łodzią wzdłuż wybrzeża Conero.',
+          lat:43.5350, lon:13.6350, next:'Camerano' },
+        { order:43, name:'Camerano', emoji:'🍷', photo:'',
+          it:'Adagiato sulle colline alle spalle del Conero, Camerano è celebre per le sue misteriose grotte sotterranee i per la produzione del vino Rosso Conero. Il centro storico conserva un\'atmosfera tranquilla i autentica, lontana dai flussi turystycznych wybrzeża. La principale attrazione è rappresentata dalle Grotte di Camerano, un complesso sotterraneo scavato nell\'arenaria la cui origine è ancora oggi oggetto di studio. Sale decorate, corridoi i ambienti misteriosi hanno alimentato per secoli racconti i leggende. Oltre alle grotte, il paese offre splendide vedute sulle colline marchigiane i numerose cantine dove degustare i vini del territorio.',
+          en:'Nestled on the hills behind the Conero, Camerano is famous for its mysterious underground caves and for the production of Rosso Conero wine. The historic centre preserves a tranquil and authentic atmosphere, away from the tourist flows of the coast. The main attraction is represented by the Grotte di Camerano, an underground complex carved into the sandstone whose origin is still the subject of study today. Decorated rooms, corridors and mysterious environments have fuelled stories and legends for centuries. In addition to the caves, the village offers splendid views of the Marche hills and numerous wineries where you can taste the wines of the area.',
+          de:'Eingebettet in die Hügel hinter dem Conero, ist Camerano berühmt für seine mysteriösen unterirdischen Höhlen und für die Produktion des Rosso Conero Weins. Das historische Zentrum bewahrt eine ruhige und authentische Atmosphäre, fernab der touristischen Ströme der Küste. Die Hauptattraktion sind die Grotte di Camerano, ein unterirdischer Komplex, der in den Sandstein gehauen wurde und dessen Ursprung auch heute noch Gegenstand von Studien ist. Dekorierte Räume, Gänge und mysteriöse Umgebungen haben jahrhundertelang Geschichten und Legenden genährt. Neben den Höhlen bietet das Dorf herrliche Ausblicke auf die Hügel der Marken und zahlreiche Weinkellereien, wo man die Weine der Gegend verkosten kann.',
+          pl:'Położone na wzgórzach za Conero, Camerano słynie z tajemniczych podziemnych jaskiń i produkcji wina Rosso Conero. Historyczne centrum zachowuje spokojną i autentyczną atmosferę, z dala od turystycznych ruchów wybrzeża. Główną atrakcję stanowią Grotte di Camerano, podziemny kompleks wykuty w piaskowcu, którego pochodzenie jest nadal przedmiotem badań. Zdobione sale, korytarze i tajemnicze pomieszczenia od wieków żywiły opowieści i legendy. Oprócz jaskiń, wieś oferuje wspaniałe widoki na wzgórza Marche i liczne winiarnie, gdzie można degustować wina regionu.',
+          lat:43.5300, lon:13.5500, next:'Offagna' },
+        { order:44, name:'Offagna', emoji:'🏰', photo:'',
+          it:'Inserito tra i Borghi più belli d\'Italia, Offagna è dominato da una splendida rocca medievale che ancora oggi caratterizza il profilo del paese. Il simbolo del borgo è la Rocca di Offagna, costruita nel XV secolo per controllare il territorio circostante. Le sue mura i le torri raccontano un passato fatto di battaglie, difesa i vita medievale. Passeggiando nel centro storico si incontrano antiche abitazioni in pietra, piccole piazze i scorci che sembrano rimasti immutati nel tempo. Ogni estate il paese ospita celebri rievocazioni storiche che trasformano le sue strade in un autentico villaggio medievale.',
+          en:'Listed among the Most Beautiful Villages in Italy, Offagna is dominated by a splendid medieval fortress that still characterises the profile of the village today. The symbol of the village is the Rocca di Offagna, built in the 15th century to control the surrounding territory. Its walls and towers tell of a past made of battles, defence and medieval life. Walking through the historic centre you come across ancient stone houses, small squares and glimpses that seem to have remained unchanged over time. Every summer the village hosts famous historical re-enactments that transform its streets into an authentic medieval village.',
+          de:'Zu den schönsten Dörfern Italiens zählend, wird Offagna von einer prächtigen mittelalterlichen Festung beherrscht, die auch heute noch das Profil des Dorfes charakterisiert. Das Symbol des Dorfes ist die Rocca di Offagna, im 15. Jahrhundert erbaut, um das umliegende Territorium zu kontrollieren. Ihre Mauern und Türme erzählen von einer Vergangenheit voller Schlachten, Verteidigung und mittelalterlichen Lebens. Beim Spaziergang durch das historische Zentrum stößt man auf alte Steinhäuser, kleine Plätze und Ausblicke, die unverändert zu sein scheinen. Jeden Sommer gastiert das Dorf berühmte historische Nachstellungen, die seine Straßen in ein authentisches mittelalterliches Dorf verwandeln.',
+          pl:'Zaliczane do najpiękniejszych wiosek Włoch, Offagna jest zdominowana przez wspaniałą średniowieczną twierdzę, która wciąż charakteryzuje profil wioski. Symbolem wioski jest Rocca di Offagna, zbudowana w XV wieku w celu kontrolowania otaczającego terytorium. Jej mury i wieże opowiadają o przeszłości pełnej bitew, obrony i średniowiecznego życia. Spacerując po historycznym centrum, natrafia się na stare kamienne domy, małe place i widoki, które wydają się niezmienne w czasie. Każdego lata wioska gości słynne rekonstrukcje historyczne, które przekształcają jej ulice w autentyczną średniowieczną wieś.',
+          lat:43.5300, lon:13.4500, next:'Osimo' },
+        { order:45, name:'Osimo', emoji:'🏛️', photo:'',
+          it:'Ricca di storia i monumenti, Osimo è una delle città più affascinanti dell\'entroterra anconetano. Celebre per il suo centro storico i le misteriose grotte sotterranee, offre un viaggio tra epoche diverse. Fondata dai Piceni i successivamente sviluppata dai Romani, Osimo conserva importanti testimonianze archeologiche, palazzi nobiliari i chiese monumentali. Tra le attrazioni più particolari vi sono le Grotte di Osimo, un articolato sistema sotterraneo scavato sotto il centro storico. Simboli esoterici, bassorilievi i passaggi nascosti rendono la visita particolarmente interessante. La città è inoltre nota per i suoi eleganti palazzi i per l\'atmosfera raffinata che si respira passeggiando nelle vie del centro.',
+          en:'Rich in history and monuments, Osimo is one of the most fascinating cities in the hinterland of Ancona. Famous for its historic centre and mysterious underground caves, it offers a journey through different eras. Founded by the Piceni and subsequently developed by the Romans, Osimo preserves important archaeological testimonies, noble palaces and monumental churches. Among the most particular attractions are the Grotte di Osimo, an articulated underground system dug under the historic centre. Esoteric symbols, bas-reliefs and hidden passages make the visit particularly interesting. The city is also known for its elegant palaces and the refined atmosphere that can be breathed walking in the streets of the centre.',
+          de:'Reich an Geschichte und Denkmälern ist Osimo eine der faszinierendsten Städte im Hinterland von Ancona. Berühmt für sein historisches Zentrum und seine mysteriösen unterirdischen Höhlen, bietet es eine Reise durch verschiedene Epochen. Gegründet von den Picenern und später von den Römern weiterentwickelt, bewahrt Osimo wichtige archäologische Zeugnisse, noble Paläste und monumentale Kirchen. Zu den besondersten Attraktionen gehören die Grotte di Osimo, ein ausgefeiltes unterirdisches System, das unter dem historischen Zentrum gegraben wurde. Esoterische Symbole, Basreliefs und versteckte Passagen machen den Besuch besonders interessant. Die Stadt ist auch für ihre eleganten Paläste und die raffinierte Atmosphäre bekannt, die man beim Spaziergang in den Straßen des Zentrums atmet.',
+          pl:'Bogata w historię i zabytki, Osimo to jedno z najbardziej fascynujących miast w głębi lądu Ancony. Słynne ze swojego historycznego centrum i tajemniczych podziemnych jaskiń, oferuje podróż przez różne epoki. Założone przez Piceni, a następnie rozwijane przez Rzymian, Osimo zachowuje ważne świadectwa archeologiczne, pałace szlacheckie i monumentalne kościoły. Wśród najbardziej szczególnych atrakcji znajdują się Grotte di Osimo, rozbudowany system podziemny wykopany pod historycznym centrum. Ezoteryczne symbole, płaskorzeźby i ukryte przejścia czynią wizytę szczególnie interesującą. Miasto jest również znane z eleganckich pałaców i wyrafinowanej atmosfery, którą można poczuć spacerując ulicami centrum.',
+          lat:43.4800, lon:13.4800, next:'Loreto' },
+        { order:46, name:'Loreto', emoji:'⛪', photo:'',
+          it:'Loreto è una delle principali mete di pellegrinaggio del mondo cattolico. La sua maestosa basilica custodisce la Santa Casa, secondo la tradizione la dimora della Madonna trasportata dalla Terra Santa e, proprio per questo motivo, la Madonna di Loreto nel tempo è diventata la Patrona dell\'Aeronautica Militare Italiana e di tutto il mondo dell\'aviazione. La Basilica della Santa Casa rappresenta uno dei più importanti santuari mariani al mondo e accoglie milioni di pellegrini ogni anno. Il complesso monumentale unisce elementi rinascimentali, barocchi e neoclassici, custodendo opere d\'arte di straordinario valore. Anche per chi non è interessato agli aspetti religiosi, Loreto offre un patrimonio storico e artistico di assoluto rilievo, oltre a splendide vedute sulla campagna marchigiana e sul mare Adriatico.',
+          en:'Loreto is one of the main pilgrimage destinations in the Catholic world. Its majestic basilica houses the Holy House, which according to tradition is the dwelling of the Madonna transported from the Holy Land, and for this very reason the Madonna of Loreto has become over time the Patroness of the Italian Air Force and of the entire aviation world. The Basilica of the Holy House is one of the most important Marian shrines in the world and welcomes millions of pilgrims every year. The monumental complex unites Renaissance, Baroque and Neoclassical elements, preserving works of art of extraordinary value. Even for those not interested in religious aspects, Loreto offers a historical and artistic heritage of absolute importance, as well as splendid views of the Marche countryside and the Adriatic Sea.',
+          de:'Loreto ist eines der wichtigsten Wallfahrtsziele der katholischen Welt. Seine majestätische Basilika beherbergt das Heilige Haus, das der Tradition zufolge die Wohnstätte der Madonna ist, die aus dem Heiligen Land hierher transportiert wurde, und aus diesem Grund ist die Madonna von Loreto im Laufe der Zeit zur Schutzpatronin der italienischen Luftwaffe und der gesamten Luftfahrtwelt geworden. Die Basilika des Heiligen Hauses ist eines der wichtigsten Marienheiligtümer der Welt und empfängt jährlich Millionen von Pilgern. Der monumentale Komplex vereint Renaissance-, Barock- und neoklassizistische Elemente und bewahrt Kunstwerke von außergewöhnlichem Wert. Auch für diejenigen, die nicht an religiösen Aspekten interessiert sind, bietet Loreto ein historisches und künstlerisches Erbe von absoluter Bedeutung sowie herrliche Ausblicke auf die Landschaft der Marken und die Adria.',
+          pl:'Loreto to jeden z głównych celów pielgrzymkowych katolickiego świata. Jego majestatyczna bazylika przechowuje Święty Dom, który według tradycji jest mieszkaniem Madonny przeniesionym ze Ziemi Świętej, i właśnie z tego powodu Madonna z Loreto z czasem stała się patronką Włoskich Sił Powietrznych i całego świata lotnictwa. Bazylika Świętego Domu jest jednym z najważniejszych sanktuariów maryjnych na świecie i co roku przyjmuje miliony pielgrzymów. Zespół monumentalny łączy elementy renesansowe, barokowe i neoklasycystyczne, zachowując dzieła sztuki o niezwykłej wartości. Nawet dla tych, którzy nie interesują się aspektami religijnymi, Loreto oferuje dziedzictwo historyczne i artystyczne o absolutnym znaczeniu, a także wspaniałe widoki na wieś Marchii i Morze Adriatyckie.',
+          lat:43.4400, lon:13.6100, next:'Recanati' },
+        { order:47, name:'Recanati', emoji:'📜', photo:'',
+          it:'Città natale di Giacomo Leopardi, Recanati è uno dei luoghi più evocativi delle Marche. Letteratura, arte e paesaggi si fondono in un borgo che conserva intatto il fascino dell\'Ottocento. Passeggiare per Recanati significa entrare nei luoghi che hanno ispirato alcune delle pagine più celebri della letteratura italiana. Qui si trovano il Palazzo Leopardi, la Biblioteca di famiglia, il Colle dell\'Infinito e numerosi luoghi legati alla vita del poeta. Il centro storico conserva eleganti palazzi nobiliari, teatri e piazze che raccontano secoli di storia e cultura. Anche chi non conosce approfonditamente Leopardi rimane affascinato dall\'atmosfera unica della città.',
+          en:'Birthplace of Giacomo Leopardi, Recanati is one of the most evocative places in the Marche. Literature, art and landscapes merge in a village that preserves intact the charm of the 19th century. Walking through Recanati means entering the places that inspired some of the most famous pages of Italian literature. Here you will find Palazzo Leopardi, the family library, the Colle dell\'Infinito and numerous places linked to the poet\'s life. The historic centre preserves elegant noble palaces, theatres and squares that tell centuries of history and culture. Even those who do not know Leopardi in depth remain fascinated by the unique atmosphere of the city.',
+          de:'Geburtsort von Giacomo Leopardi ist Recanati einer der eindrucksvollsten Orte der Marken. Literatur, Kunst und Landschaften verschmelzen in einem Dorf, das den Charme des 19. Jahrhunderts unberührt bewahrt. Durch Recanati zu spazieren bedeutet, in die Orte einzutreten, die einige der berühmtesten Seiten der italienischen Literatur inspiriert haben. Hier finden sich der Palazzo Leopardi, die Familienbibliothek, der Colle dell\'Infinito und zahlreiche Orte, die mit dem Leben des Dichters verbunden sind. Das historische Zentrum bewahrt elegante Adelspaläste, Theater und Plätze, die Jahrhunderte von Geschichte und Kultur erzählen. Selbst diejenigen, die Leopardi nicht in der Tiefe kennen, bleiben von der einzigartigen Atmosphäre der Stadt fasziniert.',
+          pl:'Miejsce urodzenia Giacoma Leopardiego, Recanati to jedno z najbardziej sugestywnych miejsc w regionie Marche. Literatura, sztuka i krajobrazy łączą się w wiosce, która zachowuje nienaruszony urok XIX wieku. Spacer po Recanati to wejście w miejsca, które zainspirowały niektóre z najsłynniejszych stron literatury włoskiej. Tutaj znajdują się Palazzo Leopardi, biblioteka rodzinna, Colle dell\'Infinito i liczne miejsca związane z życiem poety. Historyczne centrum zachowuje eleganckie pałace szlacheckie, teatry i place opowiadające wieki historii i kultury. Nawet ci, którzy nie znają Leopardiego w głębi, pozostają zafascynowani wyjątkową atmosferą miasta.',
+          lat:43.4000, lon:13.5500, next:null }
+      ],
+      gastronomy: [
+        { order:1, name:'I sapori di Ancona', emoji:'🍽️', photo:'',
+          it:'La cucina anconetana racconta il legame profondo tra mare e colline. Piatti di pesce, ricette tramandate da generazioni e prodotti del territorio rendono la gastronomia locale una delle esperienze da non perdere durante il soggiorno. Ancona è una città di mare e questo si riflette nella sua cucina. Le ricette tradizionali nascono dall\'incontro tra il pescato dell\'Adriatico e gli ingredienti dell\'entroterra marchigiano, dando vita a piatti semplici ma ricchi di sapore. Molte preparazioni hanno origini antiche e ancora oggi vengono realizzate secondo le ricette tradizionali. Nei ristoranti della città è possibile trovare sia locali storici sia proposte più moderne, accomunate dall\'utilizzo di materie prime locali e pesce fresco. Assaporare la cucina anconetana significa conoscere un\'altra parte della storia della città.',
+          en:'Ancona cuisine tells of the deep bond between sea and hills. Fish dishes, recipes handed down for generations and local products make the local gastronomy one of the experiences not to be missed during your stay. Ancona is a city of the sea and this is reflected in its cuisine. Traditional recipes are born from the meeting between Adriatic catch and ingredients from the Marche hinterland, giving rise to simple but richly flavoured dishes. Many preparations have ancient origins and are still made according to traditional recipes. In the city\'s restaurants you can find both historic venues and more modern proposals, united by the use of local ingredients and fresh fish. Savouring Ancona cuisine means getting to know another part of the city\'s history.',
+          de:'Die Küche von Ancona erzählt von der tiefen Verbindung zwischen Meer und Hügeln. Fischgerichte, über Generationen weitergegebene Rezepte und lokale Produkte machen die lokale Gastronomie zu einem der Erlebnisse, die man während des Aufenthalts nicht verpassen sollte. Ancona ist eine Stadt am Meer und das spiegelt sich in ihrer Küche wider. Traditionelle Rezepte entstehen aus der Begegnung zwischen dem Fang der Adria und den Zutaten des Hinterlands der Marken und geben einfachen, aber geschmackreich reichen Gerichten Leben. Viele Zubereitungen haben uralte Ursprünge und werden noch heute nach traditionellen Rezepten zubereitet. In den Restaurants der Stadt findet man sowohl historische Lokale als auch modernere Angebote, vereint durch den Einsatz lokaler Zutaten und frischen Fischs. Die Küche von Ancona zu genießen bedeutet, einen anderen Teil der Geschichte der Stadt kennenzulernen.',
+          pl:'Kuchnia Ancony opowiada o głębokiej więzi między morzem a wzgórzami. Dania rybne, przepisy przekazywane z pokolenia na pokolenie i lokalne produkty sprawiają, że lokalna gastronomia jest jednym z doświadczeń, których nie można przegapić podczas pobytu. Ancona jest miastem morskim i odzwierciedla się to w jej kuchni. Tradycyjne przepisy rodzą się ze spotkania połowów z Adriatyku i składników z głębi lądu Marche, dając życie prostym, ale bogatym w smak daniom. Wiele przygotowań ma starożytne korzenie i wciąż jest wykonywanych według tradycyjnych przepisów. W restauracjach miasta można znaleźć zarówno zabytkowe lokale, jak i bardziej nowoczesne propozycje, zjednoczone przez użycie lokalnych składników i świeżej ryby. Delektowanie się kuchnią Ancony oznacza poznanie innej części historii miasta.',
+          lat:null, lon:null },
+        { order:2, name:'Moscioli Selvatici di Portonovo', emoji:'🦪', photo:'',
+          it:'I Moscioli di Portonovo sono mitili selvatici che crescono naturalmente sulle rocce del Monte Conero. Sono un presidio Slow Food e rappresentano una delle eccellenze gastronomiche delle Marche. A differenza delle comuni cozze allevate, i moscioli vengono raccolti esclusivamente in mare aperto da pescatori autorizzati. La raccolta è rigorosamente regolamentata per preservare questo prezioso habitat naturale e avviene solo in determinati periodi dell\'anno. Il loro sapore intenso e iodato è molto apprezzato dagli intenditori. Possono essere gustati semplicemente aperti in padella oppure utilizzati in primi piatti e zuppe di mare.',
+          en:'The Moscioli of Portonovo are wild mussels that grow naturally on the rocks of Monte Conero. They are a Slow Food presidium and represent one of the gastronomic excellences of the Marche. Unlike common farmed mussels, moscioli are harvested exclusively in the open sea by authorised fishermen. Harvesting is strictly regulated to preserve this precious natural habitat and takes place only at certain times of the year. Their intense and iodised flavour is greatly appreciated by connoisseurs. They can be enjoyed simply opened in a pan or used in first courses and seafood soups.',
+          de:'Die Moscioli von Portonovo sind wilde Muscheln, die natürlicherweise auf den Felsen des Monte Conero wachsen. Sie sind ein Slow-Food-Präsidium und repräsentieren eine der gastronomischen Exzellenzen der Marken. Im Gegensatz zu gewöhnlichen gezüchteten Muscheln werden Moscioli ausschließlich auf offener See von autorisierten Fischern geerntet. Die Ernte ist streng reguliert, um diesen wertvollen natürlichen Lebensraum zu erhalten und findet nur zu bestimmten Zeiten des Jahres statt. Ihr intensiver und iodierter Geschmack wird von Kennern sehr geschätzt. Sie können einfach in der Pfanne geöffnet genossen oder in Vorspeisen und Meeresfrüchtesuppen verwendet werden.',
+          pl:'Moscioli z Portonovo to dzikie małże rosnące naturalnie na skałach Monte Conero. Są one posterunkiem Slow Food i reprezentują jedną z kulinarnych wyżyn Marche. W przeciwieństwie do zwykłych hodowlanych małży, moscioli zbierane są wyłącznie na otwartym morzu przez upoważnionych rybaków. Zbiory są ściśle regulowane w celu zachowania tego cennego naturalnego siedliska i odbywają się tylko w określonych porach roku. Ich intensywny i jodowany smak jest bardzo ceniony przez koneserów. Można je delektować się po prostu otwarte na patelni lub wykorzystać w daniach głównych i zupach morskich.',
+          lat:null, lon:null },
+        { order:3, name:'Stoccafisso all\'Anconetana', emoji:'🐟', photo:'',
+          it:'Lo Stoccafisso all\'Anconetana è uno dei piatti più rappresentativi della tradizione cittadina, frutto degli antichi rapporti commerciali tra Ancona e il Nord Europa. Lo stoccafisso arrivava ad Ancona sulle navi mercantili provenienti dalla Norvegia e venne presto adottato dalla cucina locale. La ricetta tradizionale prevede una lunga cottura con patate, pomodoro, vino bianco, olio extravergine, olive e aromi mediterranei. Il risultato è un piatto delicato ma ricco di gusto, che ancora oggi rappresenta uno dei simboli della gastronomia marchigiana.',
+          en:'The Stoccafisso all\'Anconetana is one of the most representative dishes of the city tradition, the result of ancient trade relations between Ancona and Northern Europe. Stockfish arrived in Ancona on merchant ships from Norway and was soon adopted by the local cuisine. The traditional recipe requires long cooking with potatoes, tomato, white wine, extra virgin olive oil, olives and Mediterranean herbs. The result is a delicate but richly flavoured dish, which still today represents one of the symbols of Marche gastronomy.',
+          de:'Der Stoccafisso all\'Anconetana ist eines der repräsentativsten Gerichte der städtischen Tradition, Ergebnis der alten Handelsbeziehungen zwischen Ancona und Nordeuropa. Der Stockfisch kam auf Handelsschiffen aus Norwegen nach Ancona und wurde bald von der lokalen Küche übernommen. Das traditionelle Rezept erfordert eine lange Garzeit mit Kartoffeln, Tomaten, Weißwein, nativem Olivenöl extra, Oliven und mediterranen Kräutern. Das Ergebnis ist ein delikates, aber geschmackreich reiches Gericht, das noch heute eines der Symbole der Küche der Marken darstellt.',
+          pl:'Stoccafisso all\'Anconetana to jedno z najbardziej reprezentatywnych dań tradycji miejskiej, wynik starożytnych relacji handlowych między Ankoną a Północną Europą. Dorsz przybywał do Ancony na statkach handlowych z Norwegii i został wkrótce przyjęty przez lokalną kuchnię. Tradycyjny przepis wymaga długiego gotowania z ziemniakami, pomidorami, białym winem, oliwą z oliwek extra virgin, oliwkami i ziołami śródziemnomorskimi. Wynikiem jest delikatne, ale bogate w smak danie, które do dziś reprezentuje jeden z symboli kuchni Marche.',
+          lat:null, lon:null },
+        { order:4, name:'Vincisgrassi', emoji:'🍝', photo:'',
+          it:'I Vincisgrassi sono la versione marchigiana delle lasagne e rappresentano uno dei piatti più celebri della cucina regionale. Preparati con numerosi strati di pasta fresca, ragù di carne e besciamella, i vincisgrassi richiedono una lunga preparazione e sono tradizionalmente serviti durante le festività. La ricetta varia leggermente da famiglia a famiglia, ma mantiene sempre il carattere ricco e sostanzioso che l\'ha resa famosa. Pur essendo diffusi in tutta la regione, ogni zona delle Marche conserva piccole varianti tramandate nel tempo.',
+          en:'Vincisgrassi are the Marche version of lasagne and represent one of the most famous dishes of the regional cuisine. Prepared with numerous layers of fresh pasta, meat ragù and béchamel, vincisgrassi require long preparation and are traditionally served during holidays. The recipe varies slightly from family to family, but always maintains the rich and substantial character that made it famous. Although widespread throughout the region, every area of the Marche preserves small variants handed down over time.',
+          de:'Vincisgrassi sind die Marken-Version der Lasagne und repräsentieren eines der berühmtesten Gerichte der regionalen Küche. Zubereitet mit zahlreichen Schichten frischer Pasta, Fleischragout und Béchamel erfordern Vincisgrassi eine lange Zubereitung und werden traditionell während der Feiertage serviert. Das Rezept variiert leicht von Familie zu Familie, behält aber immer den reichen und kräftigen Charakter bei, der es berühmt gemacht hat. Obwohl in der gesamten Region verbreitet, bewahrt jede Gegend der Marken kleine Varianten, die im Laufe der Zeit weitergegeben wurden.',
+          pl:'Vincisgrassi to marchijska wersja lazanii i reprezentują jedno z najsłynniejszych dań kuchni regionalnej. Przygotowane z licznymi warstwami świeżego makaronu, ragù mięsnego i beszamelu, vincisgrassi wymagają długiego przygotowania i są tradycyjnie podawane podczas świąt. Przepis nieznacznie różni się od rodziny do rodziny, ale zawsze zachowuje bogaty i treściwy charakter, który uczynił go sławnym. Chociaż rozpowszechnione w całym regionie, każdy obszar Marche zachowuje małe warianty przekazywane przez pokolenia.',
+          lat:null, lon:null },
+        { order:5, name:'Rosso Conero DOC', emoji:'🍷', photo:'',
+          it:'Il Rosso Conero è il vino simbolo del territorio. Ottenuto prevalentemente da uve Montepulciano coltivate sulle colline del Conero, accompagna perfettamente i piatti della tradizione marchigiana. Le vigne crescono su terreni ricchi di minerali, influenzati dalla vicinanza del mare e dal particolare microclima del Monte Conero. Questo conferisce al vino struttura, eleganza e intensi profumi di frutti rossi e spezie. Numerose cantine della zona propongono visite guidate e degustazioni, offrendo l\'opportunità di conoscere da vicino una delle produzioni vinicole più prestigiose delle Marche.',
+          en:'Rosso Conero is the symbolic wine of the territory. Obtained mainly from Montepulciano grapes grown on the hills of the Conero, it perfectly accompanies the dishes of the Marche tradition. The vines grow on mineral-rich soils, influenced by the proximity of the sea and the particular microclimate of Monte Conero. This gives the wine structure, elegance and intense aromas of red fruits and spices. Numerous wineries in the area offer guided tours and tastings, offering the opportunity to get to know one of the most prestigious wine productions of the Marche up close.',
+          de:'Der Rosso Conero ist der symbolische Wein des Territoriums. Er wird hauptsächlich aus Montepulciano-Trauben gewonnen, die auf den Hügeln des Conero angebaut werden, und begleitet perfekt die Gerichte der Tradition der Marken. Die Reben wachsen auf mineralreichen Böden, beeinflusst durch die Nähe zum Meer und das besondere Mikroklima des Monte Conero. Dies verleiht dem Wein Struktur, Eleganz und intensive Aromen von roten Früchten und Gewürzen. Zahlreiche Weinkellereien in der Gegend bieten Führungen und Verkostungen an und bieten die Gelegenheit, eine der prestigeträchtigsten Weinproduktionen der Marken aus der Nähe kennenzulernen.',
+          pl:'Rosso Conero to symboliczne wino tego terytorium. Pozyskiwane głównie z winogron Montepulciano uprawianych na wzgórzach Conero, doskonale towarzyszy daniom tradycji Marche. Winnice rosną na glebach bogatych w minerały, wpływanych przez bliskość morza i szczególny mikroklimat Monte Conero. To nadaje winu strukturę, elegancję i intensywne aromaty czerwonych owoców i przypraw. Liczne winiarnie w okolicy oferują wycieczki z przewodnikiem i degustacje, oferując możliwość bliższego poznania jednej z najbardziej prestiżowych produkcji winiarskich Marche.',
+          lat:null, lon:null },
+        { order:6, name:'Verdicchio', emoji:'🥂', photo:'',
+          it:'Il Verdicchio dei Castelli di Jesi è il vino bianco simbolo delle Marche, un\'espressione autentica del territorio che da secoli viene prodotto sulle colline che circondano Jesi, nel cuore della provincia di Ancona. Il nome "Verdicchio" appare per la prima volta in un atto notarile del 1569 e deriva dal caratteristico colore giallo paglierino con riflessi verdolini del vitigno. La Denominazione di Origine Controllata, ottenuta nel 1968, richiede che il vino sia prodotto con uve Verdicchio almeno all\'85%, coltivate in 23 comuni della provincia di Ancona e 2 della provincia di Macerata. Si presenta di colore giallo paglierino tenue, con un odore delicato e caratteristico e un sapore asciutto, armonico, con un retrogusto gradevolmente amarognolo. Al naso regala note di agrumi, fiori bianchi i mandorla. È considerato il vino bianco fermo più premiato d\'Italia. Il Verdicchio è estremamente versatile in cucina: si abbina perfettamente a piatti di pesce come gli spaghetti con i moscioli di Portonovo, ai fritti misti, ai risotti, ma anche a carni bianche i formaggi freschi. Per un\'esperienza completa, cerca l\'etichetta "Classico Superiore" o lasciati consigliare da un\'enoteca del centro: molte cantine della zona propongono degustazioni direttamente tra i vigneti dei Castelli di Jesi.',
+          en:'Verdicchio dei Castelli di Jesi is the symbolic white wine of the Marche, an authentic expression of the territory that has been produced for centuries on the hills surrounding Jesi, in the heart of the province of Ancona. The name "Verdicchio" appears for the first time in a notarial deed of 1569 and derives from the characteristic straw-yellow colour with greenish reflections of the vine. The Controlled Designation of Origin, obtained in 1968, requires that the wine be produced with at least 85% Verdicchio grapes, grown in 23 municipalities of the province of Ancona and 2 of the province of Macerata. It has a pale straw-yellow colour, with a delicate and characteristic smell and a dry, harmonious taste, with a pleasantly bitter aftertaste. On the nose it offers notes of citrus, white flowers and almond. It is considered the most awarded still white wine in Italy. Verdicchio is extremely versatile in the kitchen: it pairs perfectly with fish dishes such as spaghetti with Portonovo moscioli, mixed fried foods, risottos, but also with white meats and fresh cheeses. For a complete experience, look for the "Classico Superiore" label or let yourself be advised by a wine shop in the centre: many wineries in the area offer tastings directly among the vineyards of the Castelli di Jesi.',
+          de:'Der Verdicchio dei Castelli di Jesi ist der symbolische Weißwein der Marken, ein authentischer Ausdruck des Territoriums, der seit Jahrhunderten auf den Hügeln um Jesi herum produziert wird, im Herzen der Provinz Ancona. Der Name "Verdicchio" erscheint erstmals in einer notariellen Urkunde von 1569 und leitet sich von der charakteristischen strohgelben Farbe mit grünlichen Reflexen der Rebe ab. Die kontrollierte Ursprungsbezeichnung, die 1968 erhalten wurde, verlangt, dass der Wein zu mindestens 85% aus Verdicchio-Trauben hergestellt wird, die in 23 Gemeinden der Provinz Ancona und 2 der Provinz Macerata angebaut werden. Er zeigt sich in einem blassen Strohgelb, mit einem zarten und charakteristischen Duft und einem trockenen, harmonischen Geschmack mit einem angenehm bitteren Nachgeschmack. In der Nase bietet er Noten von Zitrusfrüchten, weißen Blüten und Mandel. Er gilt als der am meisten ausgezeichnete Weißwein Italiens. Der Verdicchio ist in der Küche äußerst vielseitig: Er passt perfekt zu Fischgerichten wie Spaghetti mit Portonovo-Moscioli, gemischten Fritti, Risottos, aber auch zu weißem Fleisch und frischem Käse. Für ein vollständiges Erlebnis suchen Sie nach dem Etikett "Classico Superiore" oder lassen Sie sich von einer Weinhandlung im Zentrum beraten: Viele Weinkellereien in der Gegend bieten Verkostungen direkt zwischen den Weinbergen der Castelli di Jesi an.',
+          pl:'Verdicchio dei Castelli di Jesi to symboliczne białe wino regionu Marche, autentyczne wyrażenie terytorium, które od wieków jest produkowane na wzgórzach otaczających Jesi, w sercu prowincji Ancona. Nazwa "Verdicchio" pojawia się po raz pierwszy w akcie notarialnym z 1569 roku i pochodzi od charakterystycznego słomkowo-żółtego koloru z zielonkawymi refleksami winorośli. Kontrolowane Oznaczenie Pochodzenia, uzyskane w 1968 roku, wymaga, aby wino było produkowane z co najmniej 85% winogron Verdicchio, uprawianych w 23 gminach prowincji Ancona i 2 prowincji Macerata. Ma blady słomkowo-żółty kolor, z delikatnym i charakterystycznym zapachem oraz suchym, harmonijnym smakiem, z przyjemnie gorzkim posmakiem. W nosie oferuje nuty cytrusów, białych kwiatów i migdałów. Jest uważane za najbardziej nagradzane niewytrawne białe wino we Włoszech. Verdicchio jest niezwykle wszechstronne w kuchni: doskonale pasuje do dań rybnych, takich jak spaghetti z moscioli z Portonovo, mieszanych smażonych potraw, risotto, ale także do białego mięsa i świeżych serów. Aby uzyskać pełne doświadczenie, szukaj etykiety "Classico Superiore" lub daj się doradzić sklepowi z winami w centrum: wiele winiarni w okolicy oferuje degustacje bezpośrednio wśród winnic Castelli di Jesi.',
+          lat:null, lon:null }
+      ],
+      restaurants: [
+        { order:1, name:'La Cantineta', emoji:'🍷', type:'trattoria',
+          it:'Storica trattoria del centro dove la tradizione anconetana è protagonista. È il posto giusto per assaggiare due grandi classici della cucina locale: i tagliolini allo scoglio e lo stoccafisso all\'anconetana, preparati secondo la tradizione. Un indirizzo semplice e autentico, molto apprezzato da chi desidera conoscere i sapori tipici della città.',
+          en:'Historic trattoria in the centre where Ancona tradition is the protagonist. It is the right place to taste two great classics of local cuisine: tagliolini allo scoglio and stoccafisso all\'anconetana, prepared according to tradition. A simple and authentic address, much appreciated by those who want to know the typical flavours of the city.',
+          de:'Historische Trattoria im Zentrum, wo die Tradition von Ancona im Mittelpunkt steht. Es ist der richtige Ort, um zwei große Klassiker der lokalen Küche zu probieren: Tagliolini allo scoglio und Stoccafisso all\'anconetana, nach Tradition zubereitet. Eine einfache und authentische Adresse, sehr geschätzt von denjenigen, die die typischen Aromen der Stadt kennenlernen möchten.',
+          pl:'Historyczna trattoria w centrum, gdzie tradycja Ancony jest protagonistą. To właściwe miejsce, aby skosztować dwóch wielkich klasyków kuchni lokalnej: tagliolini allo scoglio i stoccafisso all\'anconetana, przygotowanych według tradycji. Prosty i autentyczny adres, bardzo ceniony przez tych, którzy chcą poznać typowe smaki miasta.',
+          lat:null, lon:null },
+        { order:2, name:'Osteria del Pozzo', emoji:'🍲', type:'osteria',
+          it:'Un\'osteria tipica nel cuore del centro storico, conosciuta per la cucina genuina e per l\'ottimo rapporto qualità-prezzo. L\'ambiente informale e la proposta legata alla tradizione marchigiana la rendono una scelta ideale sia per un pranzo sia per una cena senza rinunciare alla qualità.',
+          en:'A typical osteria in the heart of the historic centre, known for its genuine cuisine and excellent value for money. The informal atmosphere and the proposal linked to the Marche tradition make it an ideal choice for both lunch and dinner without sacrificing quality.',
+          de:'Eine typische Osteria im Herzen des historischen Zentrums, bekannt für ihre authentische Küche und das hervorragende Preis-Leistungs-Verhältnis. Die informelle Atmosphäre und das Angebot, das an die Tradition der Marken gebunden ist, machen sie zu einer idealen Wahl sowohl für das Mittagessen als auch für das Abendessen, ohne auf Qualität zu verzichten.',
+          pl:'Typowa osteria w samym sercu historycznego centrum, znana z autentycznej kuchni i doskonałego stosunku jakości do ceny. Nieformalna atmosfera i propozycja związana z tradycją Marche czynią ją idealnym wyborem zarówno na lunch, jak i kolację, bez rezygnacji z jakości.',
+          lat:null, lon:null },
+        { order:3, name:'Trattoria La Moretta', emoji:'🍸', type:'trattoria',
+          it:'Affacciata sulla suggestiva Piazza del Plebiscito, è uno dei locali storici del centro dove gustare la cucina tipica marchigiana in una delle piazze più caratteristiche di Ancona. La posizione centrale la rende perfetta per una sosta durante la visita della città.',
+          en:'Overlooking the evocative Piazza del Plebiscito, it is one of the historic venues in the centre where you can taste typical Marche cuisine in one of the most characteristic squares of Ancona. The central location makes it perfect for a stop during your visit to the city.',
+          de:'Mit Blick auf die eindrucksvolle Piazza del Plebiscito ist es eines der historischen Lokale im Zentrum, wo man typische Küche der Marken in einem der charakteristischsten Plätze von Ancona genießen kann. Die zentrale Lage macht es perfekt für einen Stopp während des Besuchs der Stadt.',
+          pl:'Z widokiem na sugestywny Piazza del Plebiscito, to jedno z historycznych miejsc w centrum, gdzie można skosztować typowej kuchni Marche na jednym z najbardziej charakterystycznych placów Ancony. Centralna lokalizacja czyni je idealnym na przystanek podczas zwiedzania miasta.',
+          lat:null, lon:null },
+        { order:4, name:'La DegOsteria', emoji:'🍝', type:'osteria',
+          it:'Nascosta alle spalle della Chiesa di Santa Maria della Piazza, offre un ambiente raccolto e una cucina creativa che unisce con equilibrio specialità di mare e di terra. Una proposta originale, sempre attenta alla qualità, con un eccellente rapporto qualità-prezzo.',
+          en:'Hidden behind the Chiesa di Santa Maria della Piazza, it offers an intimate atmosphere and creative cuisine that skilfully combines sea and land specialities. An original proposal, always attentive to quality, with an excellent value for money.',
+          de:'Versteckt hinter der Chiesa di Santa Maria della Piazza bietet sie eine intime Atmosphäre und eine kreative Küche, die Meeres- und Landesspezialitäten gekonnt verbindet. Ein origineller Vorschlag, immer aufmerksam auf Qualität, mit einem hervorragenden Preis-Leistungs-Verhältnis.',
+          pl:'Ukryta za Chiesa di Santa Maria della Piazza, oferuje kameralną atmosferę i kreatywną kuchnię, która zręcznie łączy specjały morskie i lądowe. Oryginalna propozycja, zawsze dbająca o jakość, z doskonałym stosunkiem jakości do ceny.',
+          lat:null, lon:null },
+        { order:5, name:'Bar Giuliani', emoji:'☕', type:'bar',
+          it:'Molto più di un semplice bar: caffetteria, tabacchi, gelateria, ristorante e pizzeria nello stesso locale. È un punto di riferimento del centro storico, soprattutto perché è uno dei pochi aperti anche la domenica e rimane aperto fino a tarda sera, ideale in qualsiasi momento della giornata.',
+          en:'Much more than a simple bar: coffee shop, tobacconist, ice cream parlour, restaurant and pizzeria in the same venue. It is a landmark of the historic centre, especially because it is one of the few open even on Sundays and remains open until late in the evening, ideal at any time of day.',
+          de:'Viel mehr als eine einfache Bar: Kaffeebar, Tabakhandlung, Eisdiele, Restaurant und Pizzeria im selben Lokal. Es ist ein Orientierungspunkt des historischen Zentrums, vor allem weil es eines der wenigen ist, das auch sonntags geöffnet ist und bis spät in den Abend geöffnet bleibt, ideal zu jeder Tageszeit.',
+          pl:'Znacznie więcej niż zwykły bar: kawiarnia, sklep tytoniowy, lodziarnia, restauracja i pizzeria w tym samym lokalu. To punkt orientacyjny historycznego centrum, zwłaszcza dlatego, że jest jednym z niewielu otwartych również w niedzielę i pozostaje otwarty do późnego wieczoru, idealny o każdej porze dnia.',
+          lat:null, lon:null },
+        { order:6, name:'Lasagneria Filotea', emoji:'🍝', type:'fast',
+          it:'A pochi passi dall\'appartamento, è la scelta perfetta per un pranzo veloce o da asporto. Le lasagne sono preparate secondo la tradizione e rappresentano una soluzione pratica senza rinunciare alla qualità.',
+          en:'A few steps from the apartment, it is the perfect choice for a quick lunch or takeaway. The lasagne are prepared according to tradition and represent a practical solution without sacrificing quality.',
+          de:'Nur wenige Schritte von der Wohnung entfernt ist es die perfekte Wahl für ein schnelles Mittagessen oder zum Mitnehmen. Die Lasagne werden nach Tradition zubereitet und stellen eine praktische Lösung dar, ohne auf Qualität zu verzichten.',
+          pl:'Zaledwie kilka kroków od apartamentu, to idealny wybór na szybki lunch lub na wynos. Lasagne są przygotowywane według tradycji i stanowią praktyczne rozwiązanie bez rezygnacji z jakości.',
+          lat:null, lon:null },
+        { order:7, name:'Pizzeria Domus', emoji:'🍕', type:'pizzeria',
+          it:'È la pizzeria più vicina all\'appartamento e fa delle ottime pizze preparate con impasti ben lievitati e ingredienti di qualità; se non sai cosa scegliere, la pizza Regina è la mia preferita.',
+          en:'It is the pizzeria closest to the apartment and makes excellent pizzas prepared with well-leavened doughs and quality ingredients; if you don\'t know what to choose, the Regina pizza is my favourite.',
+          de:'Es ist die Pizzeria, die der Wohnung am nächsten liegt, und macht ausgezeichnete Pizzen mit gut gegorenen Teigen und qualitativ hochwertigen Zutaten; wenn Sie nicht wissen, was Sie wählen sollen, ist die Pizza Regina mein Favorit.',
+          pl:'To pizzeria najbliższa apartamentowi i robi doskonałe pizze przygotowane z dobrze wyrastających ciast i wysokiej jakości składników; jeśli nie wiesz, co wybrać, pizza Regina jest moją ulubioną.',
+          lat:null, lon:null },
+        { order:8, name:'La Farina', emoji:'🍕', type:'fast',
+          it:'Ideale per un pranzo veloce, propone pizza al taglio ben lievitata e preparata ogni giorno z ingredienti stagionali. Una sosta pratica e gustosa durante una passeggiata nel centro di Ancona.',
+          en:'Ideal for a quick lunch, it offers well-leavened pizza by the slice prepared every day with seasonal ingredients. A practical and tasty stop during a walk in the centre of Ancona.',
+          de:'Ideal für ein schnelles Mittagessen, bietet es gut gegorene Pizza am Stück, die jeden Tag mit saisonalen Zutaten zubereitet wird. Ein praktischer und leckerer Stopp während eines Spaziergangs im Zentrum von Ancona.',
+          pl:'Idealne na szybki lunch, oferuje dobrze wyrastającą pizzę na kawałki przygotowywaną codziennie z sezonowych składników. Praktyczny i smaczny przystanek podczas spaceru po centrum Ancony.',
+          lat:null, lon:null },
+        { order:9, name:'Il Chiosco', emoji:'🍹', type:'bar',
+          it:'Situato nella verde Piazza Cavour, è uno dei luoghi più frequentati per un aperitivo all\'aperto. L\'atmosfera giovane e informale lo rende perfetto per rilassarsi nelle belle giornate o trascorrere una serata in compagnia.',
+          en:'Located in the green Piazza Cavour, it is one of the most popular places for an outdoor aperitif. The young and informal atmosphere makes it perfect for relaxing on beautiful days or spending an evening in company.',
+          de:'In der grünen Piazza Cavour gelegen, ist es einer der beliebtesten Orte für einen Aperitif im Freien. Die junge und informelle Atmosphäre macht es perfekt zum Entspannen an schönen Tagen oder zum Verbringen eines Abends in Gesellschaft.',
+          pl:'Położony na zielonym Piazza Cavour, jest jednym z najbardziej popularnych miejsc na aperitif na świeżym powietrzu. Młoda i nieformalna atmosfera czyni go idealnym do relaksu w piękne dni lub spędzania wieczoru w towarzystwie.',
+          lat:null, lon:null },
+        { order:10, name:'Donegal Irish Pub', emoji:'🍺', type:'pub',
+          it:'Il pub irlandese di riferimento ad Ancona, con ampia scelta di birre alla spina e serate animate da musica dal vivo. Un ambiente conviviale dove trascorrere il dopocena o bere una birra in compagnia.',
+          en:'The reference Irish pub in Ancona, with a wide choice of draft beers and evenings animated by live music. A convivial environment where to spend the after-dinner or have a beer in company.',
+          de:'Die Referenz-Irish-Pub in Ancona, mit einer großen Auswahl an Bieren vom Fass und Abenden, die von Live-Musik belebt werden. Eine gesellige Umgebung, um den Abend zu verbringen oder ein Bier in Gesellschaft zu trinken.',
+          pl:'Referencyjny pub irlandzki w Anconie, z szerokim wyborem piw z nalewaka i wieczorami ożywianymi muzyką na żywo. Towarzyska atmosfera, w której można spędzić wieczór lub wypić piwo w towarzystwie.',
+          lat:null, lon:null },
+        { order:11, name:'Norcineria Taccalite', emoji:'🥩', type:'gastronomia',
+          it:'Situata all\'inizio di Corso Stamira, Taccalite è una delle attività storiche più conosciute del centro di Ancona. Da generazioni propone salumi, formaggi, specialità marchigiane e prodotti gastronomici selezionati, diventando un punto di riferimento sia per gli anconetani sia per chi desidera portare a casa i sapori autentici del territorio. Ideale per acquistare prodotti tipici, preparare un aperitivo o scegliere un souvenir gastronomico di qualità.',
+          en:'Located at the beginning of Corso Stamira, Taccalite is one of the most well-known historic businesses in the centre of Ancona. For generations it has offered cured meats, cheeses, Marche specialities and selected gastronomic products, becoming a reference point for both the people of Ancona and for those who wish to take home the authentic flavours of the territory. Ideal for buying typical products, preparing an aperitif or choosing a quality gastronomic souvenir.',
+          de:'Am Anfang des Corso Stamira gelegen, ist Taccalite eines der bekanntesten historischen Geschäfte im Zentrum von Ancona. Seit Generationen bietet es Wurstwaren, Käse, Spezialitäten der Marken und ausgewählte Gastronomieprodukte an und ist zu einem Bezugspunkt sowohl für die Anconetaner als auch für diejenigen geworden, die die authentischen Aromen des Territoriums mit nach Hause nehmen möchten. Ideal für den Kauf typischer Produkte, die Zubereitung eines Aperitifs oder die Auswahl eines qualitativ hochwertigen gastronomischen Souvenirs.',
+          pl:'Położona na początku Corso Stamira, Taccalite to jedno z najbardziej znanych historycznych przedsiębiorstw w centrum Ancony. Od pokoleń oferuje wędliny, sery, specjały Marche i wyselekcjonowane produkty gastronomiczne, stając się punktem odniesienia zarówno dla mieszkańców Ancony, jak i dla tych, którzy chcą zabrać do domu autentyczne smaki terytorium. Idealna do zakupu produktów typowych, przygotowania aperitifu lub wyboru jakościowego pamiątki gastronomicznej.',
+          lat:null, lon:null },
+        { order:12, name:'La Bottega del Carmine', emoji:'🧺', type:'gastronomia',
+          it:'Nel cuore del centro storico, lungo Corso Mazzini, La Bottega del Carmine è una gastronomia molto apprezzata per la qualità delle materie prime e delle preparazioni artigianali. Propone piatti pronti, specialità locali, salumi, formaggi e una selezione accurata di prodotti del territorio. È una soluzione perfetta per un pranzo veloce, una cena in appartamento o per assaggiare alcune delle eccellenze gastronomiche marchigiane.',
+          en:'In the heart of the historic centre, along Corso Mazzini, La Bottega del Carmine is a gastronomy much appreciated for the quality of its raw materials and artisanal preparations. It offers ready-made dishes, local specialities, cured meats, cheeses and a careful selection of local products. It is a perfect solution for a quick lunch, a dinner at the apartment or to taste some of the gastronomic excellences of the Marche.',
+          de:'Im Herzen des historischen Zentrums, entlang des Corso Mazzini, ist La Bottega del Carmine eine Gastronomie, die sehr geschätzt wird für die Qualität ihrer Rohstoffe und handwerklichen Zubereitungen. Sie bietet Fertiggerichte, lokale Spezialitäten, Wurstwaren, Käse und eine sorgfältige Auswahl lokaler Produkte. Es ist eine perfekte Lösung für ein schnelles Mittagessen, ein Abendessen in der Wohnung oder um einige der gastronomischen Exzellenzen der Marken zu probieren.',
+          pl:'W samym sercu historycznego centrum, wzdłuż Corso Mazzini, La Bottega del Carmine to gastronomia bardzo ceniona za jakość surowców i rzemieślniczych przygotowań. Oferuje gotowe dania, lokalne specjały, wędliny, sery i starannie dobrany wybór produktów lokalnych. To idealne rozwiązanie na szybki lunch, kolację w apartamencie lub skosztowanie niektórych kulinarnych wyżyn Marche.',
+          lat:null, lon:null },
+        { order:13, name:'Mercato di Piazza Roma', emoji:'🥕', type:'market',
+          it:'Ogni mattina Piazza Roma si anima con il tradizionale mercato ambulante, uno degli appuntamenti più autentici della vita cittadina. Tra banchi di abbigliamento, articoli per la casa e specialità locali, è il luogo ideale per osservare la quotidianità degli anconetani e vivere il centro storico in un\'atmosfera vivace e genuina. Una passeggiata tra le bancarelle permette di scoprire voci, occasioni, colori e tradizioni che fanno parte della storia della città.',
+          en:'Every morning Piazza Roma comes alive with the traditional street market, one of the most authentic appointments of city life. Among stalls of clothing, household items and local specialities, it is the ideal place to observe the daily life of the people of Ancona and experience the historic centre in a lively and genuine atmosphere. A walk among the stalls allows you to discover voices, bargains, colours and traditions that are part of the city\'s history.',
+          de:'Jeden Morgen erwacht die Piazza Roma mit dem traditionellen Straßenmarkt, einem der authentischsten Termine des städtischen Lebens. Zwischen Ständen mit Kleidung, Haushaltsartikeln und lokalen Spezialitäten ist es der ideale Ort, um den Alltag der Anconetaner zu beobachten und das historische Zentrum in einer lebhaften und authentischen Atmosphäre zu erleben. Ein Spaziergang zwischen den Ständen ermöglicht es, Stimmen, Schnäppchen, Farben und Traditionen zu entdecken, die Teil der Geschichte der Stadt sind.',
+          pl:'Każdego ranka Piazza Roma ożywa tradycyjnym targiem ulicznym, jednym z najbardziej autentycznych wydarzeń życia miejskiego. Wśród straganów z odzieżą, artykułami gospodarstwa domowego i lokalnymi specjałami, to idealne miejsce do obserwowania codziennego życia mieszkańców Ancony i przeżywania historycznego centrum w żywej i autentycznej atmosferze. Spacer wśród straganów pozwala odkryć głosy, okazje, kolory i tradycje, które są częścią historii miasta.',
+          lat:null, lon:null },
+        { order:14, name:'Coal – Via Podesti', emoji:'🛒', type:'supermarket',
+          it:'Il supermercato più vicino all\'appartamento, ideale per la spesa quotidiana. Ben fornito e facilmente raggiungibile a piedi, permette di acquistare tutto il necessario per il soggiorno in pochi minuti.',
+          en:'The supermarket closest to the apartment, ideal for daily shopping. Well stocked and easily reachable on foot, it allows you to buy everything you need for your stay in a few minutes.',
+          de:'Der Supermarkt, der der Wohnung am nächsten liegt, ideal für den täglichen Einkauf. Gut sortiert und leicht zu Fuß erreichbar, ermöglicht er es, in wenigen Minuten alles zu kaufen, was für den Aufenthalt benötigt wird.',
+          pl:'Supermarket najbliższy apartamentowi, idealny na codzienne zakupy. Dobrze zaopatrzony i łatwo dostępny pieszo, pozwala kupić wszystko, co potrzebne na pobyt, w ciągu kilku minut.',
+          lat:null, lon:null },
+        { order:15, name:'Coal Via San Martino', emoji:'🛒', type:'supermarket',
+          it:'Supermercato in via San Martino aperto anche la mattina di domenica e festivi.',
+          en:'Supermarket in Via San Martino open even on Sunday and holiday mornings.',
+          de:'Supermarkt in der Via San Martino auch sonntags und an Feiertagmorgen geöffnet.',
+          pl:'Supermarket w Via San Martino otwarty również w niedzielne i świąteczne poranki.',
+          lat:null, lon:null },
+        { order:16, name:'Si con te via Matteotti', emoji:'🛒', type:'supermarket',
+          it:'Supermercato aperto fino alle 20:30 con un buon reparto macelleria.',
+          en:'Supermarket open until 20:30 with a good butcher\'s department.',
+          de:'Supermarkt geöffnet bis 20:30 mit einer guten Metzgereiabteilung.',
+          pl:'Supermarket otwarty do 20:30 z dobrym działem mięsnym.',
+          lat:null, lon:null }
+      ],
+      services: [
+        { order:1, name:'Farmacie e Servizi Sanitari', emoji:'🏥', category:'health',
+          it:'Nel centro di Ancona sono presenti numerose farmacie e la guardia medica, facilmente raggiungibili a piedi dall\'appartamento. In questa sezione troverai gli indirizzi, gli orari e i riferimenti utili per farmacie, guardia medica, pronto soccorso e servizi sanitari.',
+          en:'In the centre of Ancona there are numerous pharmacies and the medical guard, easily reachable on foot from the apartment. In this section you will find addresses, opening hours and useful references for pharmacies, medical guard, emergency room and health services.',
+          de:'Im Zentrum von Ancona gibt es zahlreiche Apotheken und den medizinischen Notdienst, die bequem zu Fuß von der Wohnung aus erreichbar sind. In diesem Abschnitt finden Sie Adressen, Öffnungszeiten und nützliche Hinweise zu Apotheken, medizinischem Notdienst, Notaufnahme und Gesundheitsdiensten.',
+          pl:'W centrum Ancony znajduje się wiele aptek i pogotowie medyczne, łatwo dostępne pieszo z apartamentu. W tej sekcji znajdziesz adresy, godziny otwarcia i przydatne informacje dotyczące aptek, pogotowia medycznego, izby przyjęć i usług zdrowotnych.',
+          lat:null, lon:null },
+        { order:2, name:'Bancomat e Banche', emoji:'🏧', category:'bank',
+          it:'Nelle immediate vicinanze dell\'appartamento sono disponibili diversi sportelli Bancomat e filiali bancarie. La maggior parte dei negozi e dei ristoranti accetta carte di pagamento, ma avere un po\' di contante può essere utile per piccoli acquisti o mercatini.',
+          en:'In the immediate vicinity of the apartment there are several ATMs and bank branches. Most shops and restaurants accept payment cards, but having some cash can be useful for small purchases or markets.',
+          de:'In unmittelbarer Nähe der Wohnung befinden sich mehrere Geldautomaten und Bankfilialen. Die meisten Geschäfte und Restaurants akzeptieren Zahlungskarten, aber etwas Bargeld kann für kleine Einkäufe oder Märkte nützlich sein.',
+          pl:'W bezpośrednim sąsiedztwie apartamentu znajduje się kilka bankomatów i oddziałów banków. Większość sklepów i restauracji akceptuje karty płatnicze, ale posiadanie trochę gotówki może być przydatne przy drobnych zakupach lub na targach.',
+          lat:null, lon:null },
+        { order:3, name:'Taxi', emoji:'🚕', category:'transport',
+          it:'Il taxi è la soluzione più comoda per raggiungere rapidamente stazione, porto, aeroporto e principali destinazioni della città. Il servizio è disponibile tutti i giorni. Se devi raggiungere l\'aeroporto o partire molto presto, è consigliabile prenotare il taxi con anticipo.',
+          en:'The taxi is the most convenient solution to quickly reach the station, port, airport and main destinations in the city. The service is available every day. If you need to reach the airport or leave very early, it is advisable to book the taxi in advance.',
+          de:'Das Taxi ist die bequemste Lösung, um schnell den Bahnhof, den Hafen, den Flughafen und die wichtigsten Ziele in der Stadt zu erreichen. Der Service ist jeden Tag verfügbar. Wenn Sie den Flughafen erreichen oder sehr früh abreisen müssen, ist es ratsam, das Taxi im Voraus zu buchen.',
+          pl:'Taksówka to najwygodniejsze rozwiązanie, aby szybko dotrzeć na dworzec, do portu, na lotnisko i do głównych celów w mieście. Usługa jest dostępna codziennie. Jeśli musisz dotrzeć na lotnisko lub wyjechać bardzo wcześnie, zaleca się wcześniejsze zamówienie taksówki.',
+          lat:null, lon:null }
+      ],
+      practical: [
+        { order:1, name:'Grotta Azzurra', emoji:'🌊', category:'beach',
+          it:'La Grotta Azzurra è una delle calette più suggestive di Ancona, un piccolo gioiello incastonato nella falesia tra il Passetto e il porto, ai piedi del Colle del Cardeto. Prende il nome da una grotta marina scavata nella roccia, dove i riflessi dell\'acqua creano giochi di luce azzurri. Questo tratto di costa, caratterizzato dalle tipiche grotte dei pescatori, delimita a sud il litorale del Passetto. La spiaggia è raggiungibile esclusivamente a piedi attraverso uno scenografico sentiero che parte da Via Panoramica, all\'incirca all\'altezza del civico n. 15. Il percorso, recentemente oggetto di lavori di messa in sicurezza, si snoda attraverso un piccolo parco costiero e scende al mare tramite una suggestiva scalinata, regalando viste spettacolari sulla falesia.',
+          en:'The Grotta Azzurra is one of the most evocative coves in Ancona, a small jewel set in the cliff between the Passetto and the port, at the foot of Colle del Cardeto. It takes its name from a sea cave carved into the rock, where the reflections of the water create blue light effects. This stretch of coast, characterised by the typical fishermen\'s caves, delimits the Passetto coastline to the south. The beach is reachable exclusively on foot via a scenic path that starts from Via Panoramica, approximately at number 15. The route, recently the subject of safety works, winds through a small coastal park and descends to the sea via an evocative staircase, offering spectacular views of the cliff.',
+          de:'Die Grotta Azzurra ist eine der eindrucksvollsten Buchten von Ancona, ein kleines Juwel in der Felswand zwischen dem Passetto und dem Hafen, am Fuße des Colle del Cardeto. Sie verdankt ihren Namen einer Meereshöhle, die in den Fels gehauen ist, wo die Reflexionen des Wassers blaue Lichteffekte erzeugen. Dieser Küstenabschnitt, der durch die typischen Fischerhöhlen charakterisiert ist, begrenzt die Küste des Passetto im Süden. Der Strand ist ausschließlich zu Fuß über einen malerischen Weg erreichbar, der von der Via Panoramica ausgeht, ungefähr bei Hausnummer 15. Die Route, die kürzlich Sicherheitsarbeiten unterzogen wurde, schlängelt sich durch einen kleinen Küstenpark und führt über eine eindrucksvolle Treppe zum Meer hinab und bietet spektakuläre Ausblicke auf die Klippe.',
+          pl:'Grotta Azzurra to jedna z najbardziej sugestywnych zatok w Anconie, mały klejnot osadzony w klifie między Passetto a portem, u podnóża Colle del Cardeto. Zawdzięcza swoją nazwę morskiej jaskini wykutej w skale, gdzie odbicia wody tworzą niebieskie efekty świetlne. Ten odcinek wybrzeża, charakteryzujący się typowymi grotami rybaków, ogranicza wybrzeże Passetto od południa. Plaża jest dostępna wyłącznie pieszo przez malowniczą ścieżkę, która zaczyna się od Via Panoramica, mniej więcej pod numerem 15. Trasa, która niedawno została poddana pracom zabezpieczającym, wije się przez mały park nadmorski i prowadzi do morza przez sugestywną klatkę schodową, oferując spektakularne widoki na klif.',
+          lat:43.6202, lon:13.5288 },
+        { order:2, name:'Pian Grande (Monte Conero)', emoji:'⛰️', category:'panorama',
+          it:'Il Pian Grande è un vasto altopiano situato sul Monte Conero, a circa 500 metri di altitudine. Questo luogo offre panorami mozzafiato sulla costa adriatica, sulle colline marchigiane e, nelle giornate più limpide, fino alle montagne dell\'Appennino. È un\'area ideale per escursioni a piedi o in mountain bike, immersa nella macchia mediterranea e nei pascoli. La zona è particolarmente apprezzata durante la primavera, quando la fioritura delle orchidee e delle ginestre colora il paesaggio di giallo e viola.',
+          en:'The Pian Grande is a vast plateau located on Monte Conero, at about 500 metres altitude. This place offers breathtaking views of the Adriatic coast, the Marche hills and, on the clearest days, as far as the Apennine mountains. It is an ideal area for hiking or mountain biking, immersed in Mediterranean scrub and pastures. The area is particularly appreciated during spring, when the flowering of orchids and broom colours the landscape in yellow and purple.',
+          de:'Der Pian Grande ist eine weite Hochebene auf dem Monte Conero, auf etwa 500 Metern Höhe. Dieser Ort bietet atemberaubende Ausblicke auf die Adriaküste, die Hügel der Marken und an den klarsten Tagen bis zu den Bergen des Apennin. Es ist ein ideales Gebiet für Wanderungen oder Mountainbike-Touren, eingetaucht in mediterranes Buschwerk und Weiden. Die Gegend ist besonders im Frühling geschätzt, wenn die Blüte von Orchideen und Ginster die Landschaft in Gelb und Lila färbt.',
+          pl:'Pian Grande to rozległy płaskowyż położony na Monte Conero, na wysokości około 500 metrów. To miejsce oferuje zapierające dech w piersiach widoki na wybrzeże adriatyckie, wzgórza Marche i, w najjaśniejsze dni, aż po góry Apeninów. To idealny obszar do wędrówek pieszych lub jazdy na rowerze górskim, zanurzony w zaroślach śródziemnomorskich i pastwiskach. Obszar jest szczególnie ceniony wiosną, gdy kwitnienie storczyków i zarnowca barwi krajobraz na żółto i fioletowo.',
+          lat:43.5555, lon:13.5947 },
+        { order:3, name:'Shopping', emoji:'🛍️', category:'shopping',
+          it:'Il centro di Ancona è ideale per una passeggiata tra negozi, boutique, librerie e botteghe storiche. Accanto ai grandi marchi troverai le bancarelle del mercato e attività locali che raccontano il carattere della città. L\'area principale dello shopping si sviluppa lungo Corso Garibaldi, Corso Mazzini, Piazza Roma e Piazza Cavour. Qui si alternano negozi di abbigliamento, calzature, profumerie, librerie, gioiellerie e articoli per la casa. Passeggiando tra le vie del centro potrai scoprire anche piccole botteghe artigiane, enoteche e negozi di prodotti tipici, ideali per acquistare un ricordo del soggiorno. Molti negozi chiudono durante la pausa pranzo. Se desideri fare shopping, il pomeriggio è generalmente il momento migliore.',
+          en:'The centre of Ancona is ideal for a stroll among shops, boutiques, bookshops and historic workshops. Alongside the big brands you will find market stalls and local businesses that tell the character of the city. The main shopping area develops along Corso Garibaldi, Corso Mazzini, Piazza Roma and Piazza Cavour. Here clothing shops, shoe shops, perfumeries, bookshops, jewellers and household items alternate. Walking through the streets of the centre you can also discover small artisan workshops, wine shops and typical product shops, ideal for buying a souvenir of your stay. Many shops close during the lunch break. If you want to go shopping, the afternoon is generally the best time.',
+          de:'Das Zentrum von Ancona ist ideal für einen Spaziergang zwischen Geschäften, Boutiquen, Buchhandlungen und historischen Werkstätten. Neben den großen Marken finden Sie Marktstände und lokale Geschäfte, die den Charakter der Stadt erzählen. Das Haupt-Einkaufsgebiet erstreckt sich entlang des Corso Garibaldi, Corso Mazzini, Piazza Roma und Piazza Cavour. Hier wechseln sich Bekleidungsgeschäfte, Schuhgeschäfte, Parfümerien, Buchhandlungen, Juweliere und Haushaltsartikel ab. Beim Spaziergang durch die Straßen des Zentrums können Sie auch kleine Handwerkswerkstätten, Weinhandlungen und Geschäfte für typische Produkte entdecken, ideal für den Kauf eines Souvenirs Ihres Aufenthalts. Viele Geschäfte schließen während der Mittagspause. Wenn Sie einkaufen möchten, ist der Nachmittag im Allgemeinen die beste Zeit.',
+          pl:'Centrum Ancony jest idealne na spacer wśród sklepów, butików, księgarni i historycznych warsztatów. Obok wielkich marek znajdziesz stragany targowe i lokalne firmy opowiadające o charakterze miasta. Główna strefa zakupów rozciąga się wzdłuż Corso Garibaldi, Corso Mazzini, Piazza Roma i Piazza Cavour. Tutaj na przemian znajdują się sklepy odzieżowe, obuwnicze, perfumerie, księgarnie, jubilerzy i artykuły gospodarstwa domowego. Spacerując uliczkami centrum, możesz odkryć także małe warsztaty rzemieślnicze, sklepy z winami i sklepy z produktami regionalnymi, idealne do kupienia pamiątki z pobytu. Wiele sklepów zamyka się podczas przerwy obiadowej. Jeśli chcesz robić zakupy, popołudnie jest zazwyczaj najlepszą porą.',
+          lat:null, lon:null },
+        { order:4, name:'Prodotti tipici', emoji:'🎁', category:'shopping',
+          it:'Porta a casa un po\' di Marche scegliendo uno dei prodotti tipici del territorio, tra specialità gastronomiche e vini locali. Tra i prodotti più apprezzati trovi il Rosso Conero, il Verdicchio dei Castelli di Jesi, olio extravergine, miele, salumi, formaggi, pasta artigianale e dolci tradizionali. Numerose gastronomie ed enoteche del centro propongono confezioni regalo e prodotti selezionati. Una bottiglia di Rosso Conero e una di Verdicchio insieme ad una confezione sotto vuoto di olive ascolane sono tra i ricordi più autentici da portare a casa.',
+          en:'Take home a piece of the Marche by choosing one of the typical products of the territory, between gastronomic specialities and local wines. Among the most appreciated products you will find Rosso Conero, Verdicchio dei Castelli di Jesi, extra virgin olive oil, honey, cured meats, cheeses, artisanal pasta and traditional sweets. Numerous delicatessens and wine shops in the centre offer gift packages and selected products. A bottle of Rosso Conero and one of Verdicchio together with a vacuum-packed box of Ascoli olives are among the most authentic souvenirs to take home.',
+          de:'Nehmen Sie ein Stück Marken mit nach Hause, indem Sie eines der typischen Produkte des Territoriums wählen, zwischen gastronomischen Spezialitäten und lokalen Weinen. Zu den beliebtesten Produkten gehören Rosso Conero, Verdicchio dei Castelli di Jesi, natives Olivenöl extra, Honig, Wurstwaren, Käse, handgemachte Pasta und traditionelle Süßigkeiten. Zahlreiche Feinkostläden und Weinhandlungen im Zentrum bieten Geschenkpackungen und ausgewählte Produkte an. Eine Flasche Rosso Conero und eine Flasche Verdicchio zusammen mit einer vakuumverpackten Schachtel Ascolana-Oliven gehören zu den authentischsten Souvenirs, die man mit nach Hause nehmen kann.',
+          pl:'Zabierz do domu kawałek Marche, wybierając jeden z typowych produktów terytorium, między specjałami gastronomicznymi a lokalnymi winami. Wśród najbardziej cenionych produktów znajdziesz Rosso Conero, Verdicchio dei Castelli di Jesi, oliwę z oliwek extra virgin, miód, wędliny, sery, rzemieślniczy makaron i tradycyjne słodycze. Liczne delikatesy i sklepy z winami w centrum oferują pakiety prezentowe i wyselekcjonowane produkty. Butelka Rosso Conero i jedna Verdicchio wraz z próżniowo pakowanym pudełkiem oliwek ascolańskich należą do najbardziej autentycznych pamiątek do zabrania do domu.',
+          lat:null, lon:null },
+        { order:5, name:'Meteo e mare', emoji:'🏖️', category:'info',
+          it:'Il clima di Ancona è tipicamente mediterraneo, con estati calde e ventilate e inverni generalmente miti. Durante la primavera e l\'estate il mare è spesso balneabile da maggio fino a settembre inoltrato. Per organizzare al meglio escursioni e giornate in spiaggia è sempre utile consultare le previsioni meteo aggiornate e lo stato del mare.',
+          en:'The climate of Ancona is typically Mediterranean, with hot and breezy summers and generally mild winters. During spring and summer the sea is often swimmable from May until late September. To best organise excursions and beach days it is always useful to check the updated weather forecasts and sea conditions.',
+          de:'Das Klima von Ancona ist typisch mediterran, mit heißen und windigen Sommern sowie im Allgemeinen milden Wintern. Während des Frühlings und Sommers ist das Meer oft von Mai bis Ende September zum Baden geeignet. Um Ausflüge und Strandtage bestmöglich zu organisieren, ist es immer nützlich, die aktuellen Wettervorhersagen und Meeresbedingungen zu prüfen.',
+          pl:'Klimat Ancony jest typowo śródziemnomorski, z gorącymi i wietrznymi latami oraz ogólnie łagodnymi zimami. Wiosną i latem morze jest często nadające się do kąpieli od maja do końca września. Aby najlepiej zorganizować wycieczki i dni na plaży, zawsze warto sprawdzić aktualne prognozy pogody i stan morza.',
+          lat:null, lon:null },
+        { order:6, name:'Tramonti da non perdere', emoji:'🌅', category:'panorama',
+          it:'Ancona è anche la città dove il sole sorge e tramonta sul mare ed offre alcuni punti panoramici davvero spettacolari, perfetti per iniziare o concludere la giornata. Per ammirare il tramonto con il sole che scende sul mare i luoghi che consiglio maggiormente sono: Colle Guasco, Parco del Cardeto, Belvedere Casanova a Capodimonte, Bar Giuliani e Bar Amarcord. Ogni punto regala una prospettiva diversa sulla città e sul mare.',
+          en:'Ancona is also the city where the sun rises and sets over the sea and offers some truly spectacular panoramic points, perfect for starting or ending the day. To admire the sunset with the sun descending over the sea, the places I recommend most are: Colle Guasco, Parco del Cardeto, Belvedere Casanova in Capodimonte, Bar Giuliani and Bar Amarcord. Each point offers a different perspective on the city and the sea.',
+          de:'Ancona ist auch die Stadt, in der die Sonne über dem Meer auf- und untergeht, und bietet einige wirklich spektakuläre Panoramapunkte, perfekt zum Beginn oder Ende des Tages. Um den Sonnenuntergang mit der untergehenden Sonne über dem Meer zu bewundern, empfehle ich vor allem: Colle Guasco, Parco del Cardeto, Belvedere Casanova in Capodimonte, Bar Giuliani und Bar Amarcord. Jeder Punkt bietet eine andere Perspektive auf die Stadt und das Meer.',
+          pl:'Ancona to również miasto, w którym słońce wschodzi i zachodzi nad morzem, oferując niektóre naprawdę spektakularne punkty panoramiczne, idealne do rozpoczęcia lub zakończenia dnia. Aby podziwiać zachód słońca z słońcem zachodzącym nad morzem, miejsca, które polecam najbardziej, to: Colle Guasco, Parco del Cardeto, Belvedere Casanova w Capodimonte, Bar Giuliani i Bar Amarcord. Każdy punkt oferuje inną perspektywę na miasto i morze.',
+          lat:null, lon:null },
+        { order:7, name:'Alba al Passetto', emoji:'🌅', category:'panorama',
+          it:'Assistere all\'alba dal Passetto è una delle esperienze più suggestive che Ancona possa offrire. Grazie alla particolare posizione della città, guardando all\'alba verso oriente, il sole sorge direttamente dal mare creando giochi di luce spettacolari sulla falesia, sulle grotte dei pescatori e sull\'Adriatico. Nelle prime ore del mattino il luogo è silenzioso e frequentato soprattutto da chi ama camminare, correre o semplicemente godersi uno dei panorami più belli della città.',
+          en:'Watching the sunrise from the Passetto is one of the most evocative experiences Ancona can offer. Thanks to the particular position of the city, looking east at dawn, the sun rises directly from the sea creating spectacular light effects on the cliff, the fishermen\'s caves and the Adriatic. In the early morning hours the place is silent and frequented mainly by those who love walking, running or simply enjoying one of the most beautiful panoramas of the city.',
+          de:'Den Sonnenaufgang vom Passetto aus zu beobachten ist eines der eindrucksvollsten Erlebnisse, die Ancona bieten kann. Dank der besonderen Lage der Stadt, wenn man bei Sonnenaufgang nach Osten blickt, geht die Sonne direkt aus dem Meer auf und erzeugt spektakuläre Lichteffekte auf der Klippe, den Fischerhöhlen und der Adria. In den frühen Morgenstunden ist der Ort still und wird hauptsächlich von denjenigen besucht, die gerne spazieren gehen, laufen oder einfach eines der schönsten Panoramen der Stadt genießen.',
+          pl:'Obserwowanie wschodu słońca z Passetto to jedno z najbardziej sugestywnych doświadczeń, jakie Ancona może zaoferować. Dzięki szczególnej pozycji miasta, patrząc na wschód o świcie, słońce wschodzi bezpośrednio z morza, tworząc spektakularne efekty świetlne na klifie, grotach rybaków i Adriatyku. W pierwszych godzinach porannych miejsce jest ciche i odwiedzane głównie przez tych, którzy kochają spacery, bieganie lub po prostu cieszenie się jednym z najpiękniejszych widoków miasta.',
+          lat:null, lon:null },
+        { order:8, name:'Quando visitare Ancona', emoji:'📅', category:'info',
+          it:'Ancona è piacevole tutto l\'anno, ma ogni stagione offre esperienze diverse. La primavera è ideale per escursioni, passeggiate e visite culturali. L\'estate è perfetta per spiagge, mare e serate all\'aperto. L\'autunno regala colori splendidi sul Conero ed è il periodo migliore per l\'enogastronomia. L\'inverno permette di visitare la città con tranquillità, senza l\'affollamento turistico. Se puoi scegliere, maggio, giugno e settembre rappresentano probabilmente il miglior equilibrio tra clima, mare e tranquillità.',
+          en:'Ancona is pleasant all year round, but each season offers different experiences. Spring is ideal for excursions, walks and cultural visits. Summer is perfect for beaches, sea and evenings outdoors. Autumn offers splendid colours on the Conero and is the best time for food and wine. Winter allows you to visit the city in tranquillity, without the tourist crowds. If you can choose, May, June and September probably represent the best balance between climate, sea and tranquillity.',
+          de:'Ancona ist das ganze Jahr über angenehm, aber jede Jahreszeit bietet unterschiedliche Erlebnisse. Der Frühling ist ideal für Ausflüge, Spaziergänge und kulturelle Besuche. Der Sommer ist perfekt für Strände, Meer und Abende im Freien. Der Herbst bietet prächtige Farben auf dem Conero und ist die beste Zeit für Kulinarik und Wein. Der Winter ermöglicht es, die Stadt in Ruhe zu besuchen, ohne die Touristenmassen. Wenn Sie wählen können, repräsentieren Mai, Juni und September wahrscheinlich das beste Gleichgewicht zwischen Klima, Meer und Ruhe.',
+          pl:'Ancona jest przyjemna przez cały rok, ale każda pora roku oferuje różne doświadczenia. Wiosna jest idealna na wycieczki, spacery i wizyty kulturalne. Lato jest idealne na plaże, morze i wieczory na świeżym powietrzu. Jesień oferuje wspaniałe kolory na Conero i jest najlepszym czasem na enogastronomię. Zima pozwala zwiedzać miasto w spokoju, bez tłumów turystycznych. Jeśli możesz wybierać, maj, czerwiec i wrzesień prawdopodobnie reprezentują najlepszą równowagę między klimatem, morzem a spokojem.',
+          lat:null, lon:null }
+      ],
+      events: [
+        { order:1, name:'Eventi ad Ancona', emoji:'🎉', photo:'',
+          it:'Durante tutto l\'anno Ancona ospita festival, concerti, spettacoli teatrali, manifestazioni sportive ed eventi culturali che animano il centro storico e il porto. La stagione estiva è particolarmente ricca di appuntamenti: concerti all\'aperto, cinema sotto le stelle, festival gastronomici e iniziative dedicate al mare coinvolgono residenti e visitatori. Anche il Teatro delle Muse, la Mole Vanvitelliana e Piazza del Plebiscito ospitano regolarmente eventi di livello nazionale. Prima del soggiorno è consigliabile consultare il calendario aggiornato degli eventi, perché è facile trovare manifestazioni che rendono la visita ancora più interessante.',
+          en:'Throughout the year Ancona hosts festivals, concerts, theatrical performances, sporting events and cultural events that animate the historic centre and the port. The summer season is particularly rich in appointments: outdoor concerts, cinema under the stars, gastronomic festivals and initiatives dedicated to the sea involve residents and visitors. The Teatro delle Muse, the Mole Vanvitelliana and Piazza del Plebiscito also regularly host events of national level. Before your stay it is advisable to check the updated events calendar, as it is easy to find events that make the visit even more interesting.',
+          de:'Das ganze Jahr über gastiert Ancona Festivals, Konzerte, Theateraufführungen, Sportveranstaltungen und kulturelle Ereignisse, die das historische Zentrum und den Hafen beleben. Die Sommersaison ist besonders reich an Terminen: Open-Air-Konzerte, Kino unter den Sternen, gastronomische Festivals und Initiativen, die dem Meer gewidmet sind, beziehen Einwohner und Besucher mit ein. Auch das Teatro delle Muse, die Mole Vanvitelliana und die Piazza del Plebiscito beherbergen regelmäßig Veranstaltungen von nationalem Niveau. Vor Ihrem Aufenthalt ist es ratsam, den aktualisierten Veranstaltungskalender zu konsultieren, da es leicht ist, Veranstaltungen zu finden, die den Besuch noch interessanter machen.',
+          pl:'Przez cały rok Ancona gości festiwale, koncerty, przedstawienia teatralne, wydarzenia sportowe i kulturalne, które ożywiają historyczne centrum i port. Sezon letni jest szczególnie bogaty w wydarzenia: koncerty na świeżym powietrzu, kino pod gwiazdami, festiwale gastronomiczne i inicjatywy poświęcone morzu angażują mieszkańców i turystów. Teatro delle Muse, Mole Vanvitelliana i Piazza del Plebiscito również regularnie gości wydarzenia na poziomie krajowym. Przed pobytem warto sprawdzić zaktualizowany kalendarz wydarzeń, ponieważ łatwo znaleźć imprezy, które uczynią wizytę jeszcze bardziej interesującą.',
+          lat:null, lon:null }
+      ],
+      excursions: [
+        { order:1, name:'Escursioni in barca', emoji:'⛵', photo:'',
+          it:'Una delle esperienze più belle da vivere è un\'escursione in barca lungo la Riviera del Conero. Vista dal mare, la costa rivela tutta la sua straordinaria bellezza. Le escursioni partono principalmente da Numana e Portonovo e permettono di raggiungere luoghi accessibili solo via mare, come la Spiaggia delle Due Sorelle. Durante la navigazione si ammirano falesie bianche, grotte naturali, calette nascoste e acque incredibilmente trasparenti. Molte escursioni prevedono soste per il bagno e racconti sulla storia e la geologia del Monte Conero e un pranzo cucinato e consumato a bordo con il pescato ottenuto dalla calata durante il tragitto.',
+          en:'One of the most beautiful experiences to live is a boat excursion along the Conero Riviera. Seen from the sea, the coast reveals all its extraordinary beauty. The excursions depart mainly from Numana and Portonovo and allow you to reach places accessible only by sea, such as the Spiaggia delle Due Sorelle. During the navigation you can admire white cliffs, natural caves, hidden coves and incredibly transparent waters. Many excursions include swimming stops and stories about the history and geology of Monte Conero and a lunch cooked and eaten on board with the catch obtained from fishing during the journey.',
+          de:'Eines der schönsten Erlebnisse, die man erleben kann, ist eine Bootsausflug entlang der Riviera del Conero. Vom Meer aus gesehen offenbart die Küste ihre ganze außergewöhnliche Schönheit. Die Ausflüge starten hauptsächlich von Numana und Portonovo und ermöglichen es, Orte zu erreichen, die nur per Boot erreichbar sind, wie den Spiaggia delle Due Sorelle. Während der Fahrt bewundert man weiße Klippen, natürliche Höhlen, versteckte Buchten und unglaublich transparentes Wasser. Viele Ausflüge beinhalten Bade stops und Erzählungen über die Geschichte und Geologie des Monte Conero sowie ein Mittagessen, das an Bord gekocht und mit dem Fang aus dem Fischzug während der Fahrt gegessen wird.',
+          pl:'Jednym z najpiękniejszych doświadczeń do przeżycia jest wycieczka łodzią wzdłuż Riwiery Conero. Widziana z morza, wybrzeże odkrywa całą swoją niezwykłą urodę. Wycieczki wypływają głównie z Numany i Portonovo i pozwalają dotrzeć do miejsc dostępnych wyłącznie drogą morską, takich jak Spiaggia delle Due Sorelle. Podczas rejsu można podziwiać białe klify, naturalne jaskinie, ukryte zatoki i niesamowicie przezroczyste wody. Wiele wycieczek obejmuje przerwy na kąpiel i opowieści o historii i geologii Monte Conero oraz lunch gotowany i spożywany na pokładzie z połowu uzyskanego podczas podróży.',
+          lat:null, lon:null },
+        { order:2, name:'Escursioni sul Monte Conero', emoji:'🥾', photo:'',
+          it:'Il Monte Conero è un paradiso per gli amanti delle passeggiate sia a piedi che in e-bike. Numerosi sentieri attraversano boschi mediterranei e conducono a spettacolari punti panoramici sul mare. Il Parco del Conero offre percorsi adatti sia a semplici passeggiate sia a escursionisti più esperti. Lungo i sentieri si incontrano ginestre, corbezzoli, lecci e una ricca fauna locale. Ogni percorso regala scorci differenti sulla costa, sulle spiagge e sull\'entroterra marchigiano. È consigliabile indossare scarpe adatte e portare con sé acqua, soprattutto durante la stagione estiva. In e-bike farsi accompagnare da una guida esperta.',
+          en:'Monte Conero is a paradise for lovers of walks both on foot and by e-bike. Numerous trails cross Mediterranean woods and lead to spectacular panoramic points over the sea. The Conero Park offers routes suitable for both simple walks and more experienced hikers. Along the trails you encounter broom, strawberry trees, holm oaks and a rich local fauna. Each route offers different glimpses of the coast, beaches and Marche hinterland. It is advisable to wear suitable shoes and bring water, especially during the summer season. By e-bike, be accompanied by an expert guide.',
+          de:'Der Monte Conero ist ein Paradies für Liebhaber von Spaziergängen sowohl zu Fuß als auch mit dem E-Bike. Zahlreiche Wege durchqueren mediterrane Wälder und führen zu spektakulären Panoramapunkten über dem Meer. Der Conero-Park bietet Routen, die sowohl für einfache Spaziergänge als auch für erfahrenere Wanderer geeignet sind. Entlang der Wege begegnet man Ginster, Erdbeerbäumen, Steineichen und einer reichen lokalen Fauna. Jede Route bietet unterschiedliche Ausblicke auf die Küste, die Strände und das Hinterland der Marken. Es ist ratsam, geeignetes Schuhwerk zu tragen und Wasser mitzubringen, besonders während der Sommersaison. Mit dem E-Bike von einem erfahrenen Guide begleitet werden.',
+          pl:'Monte Conero to raj dla miłośników spacerów zarówno pieszych, jak i na rowerze elektrycznym. Liczne szlaki przecinają lasy śródziemnomorskie i prowadzą do spektakularnych punktów panoramicznych nad morzem. Park Conero oferuje trasy odpowiednie zarówno dla prostych spacerów, jak i bardziej doświadczonych wędrowców. Wzdłuż szlaków spotyka się zarnowiec, drzewa truskawkowe, dąb ostrolistny i bogatą lokalną faunę. Każda trasa oferuje różne widoki na wybrzeże, plaże i głębię lądu Marche. Zaleca się noszenie odpowiedniego obuwia i zabranie wody, zwłaszcza w sezonie letnim. Na rowerze elektrycznym warto być towarzyszonym przez doświadczonego przewodnika.',
+          lat:null, lon:null }
+      ],
+      wineries: [
+        { order:1, name:'Cantine del Conero', emoji:'🍇', photo:'',
+          it:'Le colline del Conero ospitano alcune delle cantine più rinomate delle Marche. Visitandole è possibile conoscere da vicino la produzione del Rosso Conero e degustare vini accompagnati da prodotti tipici locali. La viticoltura in quest\'area ha origini antichissime. Già Greci e Romani coltivavano la vite sulle pendici del Monte Conero, favoriti dal clima mite e dalla vicinanza del mare. Oggi numerose aziende vinicole aprono le proprie porte ai visitatori, offrendo tour tra i vigneti, visite alle botti di affinamento e degustazioni guidate. Ogni cantina racconta una storia diversa, ma tutte condividono la stessa passione per il territorio. Una visita è l\'occasione ideale per scoprire come nasce uno dei vini più rappresentativi delle Marche e acquistare una bottiglia direttamente dal produttore.',
+          en:'The hills of the Conero host some of the most renowned wineries in the Marche. By visiting them you can get to know the production of Rosso Conero up close and taste wines accompanied by typical local products. Viticulture in this area has very ancient origins. Greeks and Romans already cultivated vines on the slopes of Monte Conero, favoured by the mild climate and the proximity of the sea. Today numerous wineries open their doors to visitors, offering tours among the vineyards, visits to the ageing barrels and guided tastings. Each winery tells a different story, but they all share the same passion for the territory. A visit is the ideal opportunity to discover how one of the most representative wines of the Marche is born and to buy a bottle directly from the producer.',
+          de:'Die Hügel des Conero beherbergen einige der renommiertesten Weinkellereien der Marken. Durch einen Besuch kann man die Produktion des Rosso Conero aus der Nähe kennenlernen und Weine begleitet von typischen lokalen Produkten verkosten. Der Weinbau in dieser Gegend hat sehr uralte Ursprünge. Griechen und Römer kultivierten bereits Reben an den Hängen des Monte Conero, begünstigt vom milden Klima und der Nähe zum Meer. Heute öffnen zahlreiche Weinkellereien ihre Türen für Besucher und bieten Touren zwischen den Weinbergen, Besuche der Reifefässer und geführte Verkostungen an. Jede Weinkellerei erzählt eine andere Geschichte, aber alle teilen dieselbe Leidenschaft für das Territorium. Ein Besuch ist die ideale Gelegenheit, um zu entdecken, wie einer der repräsentativsten Weine der Marken entsteht, und eine Flasche direkt vom Produzenten zu kaufen.',
+          pl:'Wzgórza Conero gością niektóre z najbardziej renomowanych winiarni w regionie Marche. Odwiedzając je, można z bliska poznać produkcję Rosso Conero i degustować wina w towarzystwie typowych produktów lokalnych. Winnictwo w tym obszarze ma bardzo starożytne korzenie. Grecy i Rzymianie uprawiali już winorośle na stokach Monte Conero, korzystając z łagodnego klimatu i bliskości morza. Dziś liczne winiarnie otwierają swoje drzwi dla zwiedzających, oferując wycieczki między winnicami, wizyty w beczkach dojrzewania i degustacje z przewodnikiem. Każda winiarnia opowiada inną historię, ale wszystkie dzielą tę samą pasję do terytorium. Wizyta to idealna okazja, aby odkryć, jak powstaje jedno z najbardziej reprezentatywnych win Marche i kupić butelkę bezpośrednio od producenta.',
+          lat:null, lon:null }
+      ],
+      thanks: [
+        { order:1, name:'Grazie per aver scelto il nostro appartamento', emoji:'❤️', photo:'',
+          it:'Spero che questa guida ti aiuti a vivere Ancona come un abitante del posto e a scoprire non solo i luoghi più famosi, ma anche quelli meno conosciuti. Ho realizzato questa guida per condividere i luoghi che amo e che consiglio ad amici e ospiti. Se durante il soggiorno hai bisogno di un suggerimento, di un\'informazione o di un aiuto, non esitare a contattarmi. Ti auguro una splendida permanenza ad Ancona e spero che questa città sappia sorprenderti con la sua storia, il suo mare, il suo monte e la sua autenticità. Buon soggiorno!',
+          en:'I hope this guide helps you to experience Ancona like a local and to discover not only the most famous places, but also the lesser-known ones. I created this guide to share the places I love and recommend to friends and guests. If during your stay you need a suggestion, some information or help, do not hesitate to contact me. I wish you a wonderful stay in Ancona and hope that this city will surprise you with its history, its sea, its mountain and its authenticity. Enjoy your stay!',
+          de:'Ich hoffe, dass diese Anleitung Ihnen hilft, Ancona wie ein Einheimischer zu erleben und nicht nur die berühmtesten Orte, sondern auch die weniger bekannten zu entdecken. Ich habe diese Anleitung erstellt, um die Orte zu teilen, die ich liebe und die ich Freunden und Gästen empfehle. Wenn Sie während Ihres Aufenthalts einen Vorschlag, eine Information oder Hilfe benötigen, zögern Sie nicht, mich zu kontaktieren. Ich wünsche Ihnen einen wunderbaren Aufenthalt in Ancona und hoffe, dass diese Stadt Sie mit ihrer Geschichte, ihrem Meer, ihrem Berg und ihrer Authentizität überraschen wird. Genießen Sie Ihren Aufenthalt!',
+          pl:'Mam nadzieję, że ten przewodnik pomoże Ci przeżyć Ankonę jak miejscowy i odkryć nie tylko najbardziej znane miejsca, ale także te mniej znane. Stworzyłem ten przewodnik, aby podzielić się miejscami, które kocham i polecam przyjaciołom i gościom. Jeśli podczas pobytu potrzebujesz sugestii, informacji lub pomocy, nie wahaj się ze mną skontaktować. Życzę Ci wspaniałego pobytu w Anconie i mam nadzieję, że to miasto Cię zaskoczy swoją historią, morzem, górą i autentycznością. Miłego pobytu!',
+          lat:null, lon:null }
+      ]
     };
 
-
-    const sections = [
-        { id:'mustsee',     icon:'🚶', it:'Centro Storico',        en:'Historic Centre',       de:'Historisches Zentrum', pl:'Centrum historyczne' },
-        { id:'passetto',    icon:'🌊', it:'Il Passetto',            en:'The Passetto',          de:'Der Passetto',         pl:'Passetto' },
-        { id:'cardeto',     icon:'🌳', it:'Cardeto e Cittadella',   en:'Cardeto & Cittadella',  de:'Cardeto & Zitadelle',  pl:'Cardeto i Cytadela' },
-        { id:'porto',       icon:'⚓', it:'Il Porto',               en:'The Port',              de:'Der Hafen',            pl:'Port' },
-        { id:'beaches',     icon:'🏖️', it:'Spiagge del Conero',     en:'Conero Beaches',        de:'Conero-Strände',       pl:'Plaże Conero' },
-        { id:'borghi',      icon:'🏘️', it:'Borghi e dintorni',      en:'Villages & surrounds',  de:'Dörfer & Umgebung',    pl:'Miasteczka i okolice' },
-        { id:'gastronomy',  icon:'🍽️', it:'Gastronomia',            en:'Gastronomy',            de:'Gastronomie',          pl:'Gastronomia' },
-        { id:'services',    icon:'🔧', it:'Servizi',                en:'Services',              de:'Dienstleistungen',     pl:'Usługi' },
-        { id:'apartment',   icon:'🏠', it:'Appartamento',           en:'Apartment',             de:'Wohnung',              pl:'Mieszkanie' },
-        { id:'contact',     icon:'📞', it:'Contatti & Emergenze',   en:'Contacts & Emergency',  de:'Kontakt & Notfälle',   pl:'Kontakt i alarmy' }
-    ];
-
-    const sectionHashMap = { 'mustsee':0,'passetto':1,'cardeto':2,'porto':3,'beaches':4,'borghi':5,'gastronomy':6,'services':7,'apartment':8,'contact':9 };
-
-    let currentLang = 'it', currentSection = -1, currentPlaceDetail = -1, currentSectionPlaces = [], leafletMap = null, currentSubItinerary = null;
-    let placeDataMap = {}, _mapRetryCount = 0;
-    let gpsWatchId = null, gpsMarker = null, gpsCircle = null, gpsConsentGiven = null, gpsBoxCollapsed = false, deferredPrompt = null;
-    // V5.0 12/07/26: tracking GPS dedicato alla mappa fullscreen (home + itinerari),
-    // indipendente da gpsWatchId/gpsMarker della mappa di sezione. Stessa logica/UI delle altre mappe.
-    let fsGpsWatchId = null, fsGpsMarker = null, fsGpsCircle = null, fsGpsBoxCollapsed = false;
-    try { gpsConsentGiven = sessionStorage.getItem('gpsConsent'); } catch(e) {}
-    try {
-        const urlLang = new URLSearchParams(window.location.search).get('lang');
-        const stored = localStorage.getItem('guida_lang');
-        const valid = ['it','en','de','pl'];
-        if (urlLang && valid.includes(urlLang)) currentLang = urlLang;
-        else if (stored && valid.includes(stored)) currentLang = stored;
-    } catch(e) {}
-
-
-    function tr(it, en, de, pl) {
-        const val = (currentLang === 'en') ? (en || it) : (currentLang === 'de') ? (de || en || it) : (currentLang === 'pl') ? (pl || en || it) : it;
-        return val || '';
-    }
-    function setLang(lang) { currentLang=lang; document.documentElement.lang=lang; try{localStorage.setItem('guida_lang',lang);}catch(e){} document.querySelectorAll('.lang-btn').forEach(btn=>{ const isActive=btn.id==='btn-'+lang; btn.classList.toggle('active',isActive); btn.setAttribute('aria-checked',isActive?'true':'false'); }); if(leafletMap){leafletMap.remove();leafletMap=null;} if(homeStaticMap){homeStaticMap.remove();homeStaticMap=null;} _rf_lang=null; renderAll(); }
-    document.querySelectorAll('.lang-btn').forEach(btn => { btn.addEventListener('click', function() { setLang(this.id.replace('btn-', '')); }); });
-
-    // Item 4 V5.0: controllo query undefined/null prima di encodeURIComponent
-    function getMapLink(query, noSuffix) { if (!query || typeof query !== 'string') return '#'; const q = noSuffix ? query : query + ', Ancona Italia'; return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q); }
-    function getImgSearchUrl(p) { const q = p.imgQuery || (p.name + ' Ancona'); return 'https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(q); }
-
-    // Item 2 V5.0: versione semplificata — solo testo orario statico, rimuove badge colorato
-    function getHoursBadge(p) { if (!p.hours) return ''; return '<div class="hours-text">🕐 ' + p.hours + '</div>'; }
-
-    // Item 3 V5.0: aggiunta validazione regex formato data; no timezone hardcoded (usa locale browser)
-    function getCountdownHtml() {
-        try {
-            const co = new URLSearchParams(window.location.search).get('checkout');
-            if (!co || !/^\d{4}-\d{2}-\d{2}$/.test(co)) return '';
-            const target = new Date(co + 'T11:00:00');
-            if (isNaN(target.getTime())) return '';
-            const now = new Date();
-            const diff = target - now;
-            if (diff <= 0 || diff > 30*24*3600*1000) return '';
-            const d = Math.floor(diff/86400000);
-            const h = Math.floor((diff%86400000)/3600000);
-            const m = Math.floor((diff%3600000)/60000);
-            // Data leggibile localizzata
-            const months_it=['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre'];
-            const months_en=['January','February','March','April','May','June','July','August','September','October','November','December'];
-            const months_de=['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-            const months_pl=['stycznia','lutego','marca','kwietnia','maja','czerwca','lipca','sierpnia','września','października','listopada','grudnia'];
-            const day=target.getDate();
-            const mi=target.getMonth();
-            const dateStr=tr(day+' '+months_it[mi], day+' '+months_en[mi], day+'. '+months_de[mi], day+' '+months_pl[mi]);
-            // Stringa tempo mancante
-            const timeStr = d > 0 ? d+'g '+h+'h' : h > 0 ? h+'h '+m+'m' : m+' min';
-            const labelLeft = tr('Check-out entro le 11:00','Check-out by 11:00','Check-out bis 11:00 Uhr','Wymeldowanie do 11:00');
-            const labelCenter = tr('Mancano','Remaining','Noch','Pozostało');
-            return '<div class="checkout-countdown">'
-                +'<div class="countdown-left">'
-                +'<div class="countdown-left-label">'+labelLeft+'</div>'
-                +'<div class="countdown-left-date">'+dateStr+'</div>'
-                +'</div>'
-                +'<div class="countdown-center">'
-                +'<div class="countdown-center-label">'+labelCenter+'</div>'
-                +'<div class="countdown-center-value">'+timeStr+'</div>'
-                +'</div>'
-                +'</div>';
-        } catch(e) { return ''; }
+    /* ================================================================
+       FUNZIONI DI UTILITÀ
+       ================================================================ */
+    function t(key) {
+      const texts = {
+        it: { appTitle:'Guida di Ancona', welcome:'Benvenuto', itinerary:'Itinerario', gastronomy:'Gastronomia', restaurants:'Ristoranti', services:'Servizi', practical:'Info Utili', events:'Eventi', excursions:'Escursioni', wineries:'Cantine', thanks:'Grazie', back:'Indietro', readMore:'Leggi tutto', showLess:'Mostra meno', map:'Mappa', next:'Prossima tappa', prev:'Tappa precedente', start:'Inizia il percorso', language:'Lingua', close:'Chiudi', contactHost:'Contatta l\'host' },
+        en: { appTitle:'Ancona Guide', welcome:'Welcome', itinerary:'Itinerary', gastronomy:'Gastronomy', restaurants:'Restaurants', services:'Services', practical:'Useful Info', events:'Events', excursions:'Excursions', wineries:'Wineries', thanks:'Thanks', back:'Back', readMore:'Read more', showLess:'Show less', map:'Map', next:'Next stop', prev:'Previous stop', start:'Start the tour', language:'Language', close:'Close', contactHost:'Contact host' },
+        de: { appTitle:'Ancona Reiseführer', welcome:'Willkommen', itinerary:'Reiseroute', gastronomy:'Gastronomie', restaurants:'Restaurants', services:'Dienstleistungen', practical:'Nützliche Infos', events:'Veranstaltungen', excursions:'Ausflüge', wineries:'Weinkellereien', thanks:'Danke', back:'Zurück', readMore:'Mehr lesen', showLess:'Weniger anzeigen', map:'Karte', next:'Nächster Halt', prev:'Vorheriger Halt', start:'Tour beginnen', language:'Sprache', close:'Schließen', contactHost:'Gastgeber kontaktieren' },
+        pl: { appTitle:'Przewodnik po Anconie', welcome:'Witamy', itinerary:'Trasa', gastronomy:'Gastronomia', restaurants:'Restauracje', services:'Usługi', practical:'Przydatne informacje', events:'Wydarzenia', excursions:'Wycieczki', wineries:'Winiarnie', thanks:'Dziękujemy', back:'Wstecz', readMore:'Czytaj więcej', showLess:'Pokaż mniej', map:'Mapa', next:'Następny przystanek', prev:'Poprzedni przystanek', start:'Rozpocznij trasę', language:'Język', close:'Zamknij', contactHost:'Skontaktuj się z gospodarzem' }
+      };
+      return texts[lang][key] || key;
     }
 
-    function photoFallback(wrapId) { const el = document.getElementById(wrapId); const p = placeDataMap[wrapId]; if (el && p) el.innerHTML = '<a href="'+getImgSearchUrl(p)+'" target="_blank" rel="noopener noreferrer" class="detail-photo-link" aria-label="Cerca foto di '+p.name+' su Google Immagini"><span class="placeholder-emoji" aria-hidden="true">🖼️</span><span class="placeholder-text">'+tr('Clicca per vedere le foto','Click to see photos','Klicken, um Fotos zu sehen','Kliknij, aby zobaczyć zdjęcia')+'</span></a>'; }
-    function calcDistance(lat1, lon1, lat2, lon2) { const R=6371; const dLat=(lat2-lat1)*Math.PI/180; const dLon=(lon2-lon1)*Math.PI/180; const a=Math.sin(dLat/2)*Math.sin(dLat/2)+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2); return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
-
-    function openSubItinerary(subId) { currentSubItinerary=subId; currentPlaceDetail=-1; placeDataMap={}; if(leafletMap){leafletMap.remove();leafletMap=null;} renderAll(); window.scrollTo({top:0,behavior:'smooth'}); }
-    function closeSubItinerary() { currentSubItinerary=null; currentPlaceDetail=-1; placeDataMap={}; if(leafletMap){leafletMap.remove();leafletMap=null;} renderAll(); window.scrollTo({top:0,behavior:'smooth'}); }
-
-    function goTo(i) {
-        const targetId = i>=0 && sections[i] ? sections[i].id : null;
-        if((i===-1||(targetId&&NO_GPS_SECTIONS.includes(targetId)))&&gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;}
-        if(gpsMarker&&leafletMap)leafletMap.removeLayer(gpsMarker);
-        if(gpsCircle&&leafletMap)leafletMap.removeLayer(gpsCircle);
-        gpsMarker=null;gpsCircle=null;
-        distSortActive=false;
-        currentSection=i;currentPlaceDetail=-1;currentSubItinerary=null;placeDataMap={};
-        if(leafletMap){leafletMap.remove();leafletMap=null;}
-        try{const hash=i>=0&&sections[i]?'#'+sections[i].id:'';history.replaceState(null,'',hash||window.location.pathname);}catch(e){}
-        renderAll();window.scrollTo({top:0,behavior:'smooth'});
+    function getText(item, field) {
+      return item[lang] || item.it || item.en || '';
     }
 
-
-    function selectPlaceDetail(i) {
-        const items=currentSubItinerary?(appData.subItineraries[currentSubItinerary]||[]):currentSectionPlaces;
-        const p=items[i];
-        if(p&&p.isSubItinerary&&p.subId){openSubItinerary(p.subId);return;}
-        currentPlaceDetail=i;
-        if(leafletMap){leafletMap.remove();leafletMap=null;}
-        renderAll();window.scrollTo({top:0,behavior:'smooth'});
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    function backToMap(){currentPlaceDetail=-1;renderAll();window.scrollTo({top:0,behavior:'smooth'});}
-    function panToHome(){if(leafletMap)leafletMap.setView([HOME_COORDS.lat,HOME_COORDS.lng],15);}
-
-    function getDisplayNumber(p,index){
-        if(currentSubItinerary)return String.fromCharCode(65+index);
-        if(typeof p.order==='string'&&p.order.indexOf('bis')>-1)return p.order.replace('-bis','b');
-        if(typeof p.order==='number')return p.order;
-        return index+1;
+    /* ================================================================
+       COMPONENTI DI RENDERING
+       ================================================================ */
+    function renderHeader() {
+      const title = t('appTitle');
+      return `<header class="app-header">
+        <h1 onclick="showSection('home')">🏛️ ${title}</h1>
+        <div class="lang-selector">
+          <button class="${lang==='it'?'active':''}" onclick="setLang('it')">🇮🇹</button>
+          <button class="${lang==='en'?'active':''}" onclick="setLang('en')">🇬🇧</button>
+          <button class="${lang==='de'?'active':''}" onclick="setLang('de')">🇩🇪</button>
+          <button class="${lang==='pl'?'active':''}" onclick="setLang('pl')">🇵🇱</button>
+        </div>
+      </header>`;
     }
 
-    function getTotalDisplay(items,total){
-        if(!total||!items||!items.length)return 0;
-        if(currentSubItinerary)return String.fromCharCode(64+total);
-        const last=items[total-1];
-        if(last&&typeof last.order==='string'&&last.order.indexOf('bis')>-1)return last.order.replace('-bis','b');
-        if(last&&typeof last.order==='number')return last.order;
-        return total;
+    function renderNav() {
+      const sections = [
+        {id:'itinerary', icon:'🗺️'},
+        {id:'gastronomy', icon:'🍽️'},
+        {id:'restaurants', icon:'🍴'},
+        {id:'services', icon:'🛎️'},
+        {id:'practical', icon:'📋'},
+        {id:'events', icon:'🎉'},
+        {id:'excursions', icon:'🥾'},
+        {id:'wineries', icon:'🍷'},
+        {id:'thanks', icon:'❤️'}
+      ];
+      return `<nav class="bottom-nav">
+        ${sections.map(s => `<button onclick="showSection('${s.id}')" class="${currentSection===s.id?'active':''}">
+          <span>${s.icon}</span><small>${t(s.id)}</small>
+        </button>`).join('')}
+      </nav>`;
     }
 
-    function sortMustSee(a,b){function toNum(val){if(typeof val==='string'&&val.indexOf('bis')>-1)return parseFloat(val.split('-')[0])+.5;return Number(val);}return toNum(a.order)-toNum(b.order);}
-
-    window._reachTexts={};
-    window._activeReachTab='auto';
-    window._toggleReach=function(type){
-        window._activeReachTab=type;
-        const contentEl=document.getElementById('reach-content');
-        if(contentEl)contentEl.innerHTML=window._reachTexts[type]||'';
-        document.querySelectorAll('.reach-sub-btn').forEach(b=>{
-            const isActive=b.dataset.reach===type;
-            b.classList.toggle('active',isActive);
-        });
-    };
-
-    function updateGpsUI(){
-        const container=document.querySelector('.gps-container'),box=document.querySelector('.gps-box'),overlay=document.querySelector('.gps-icon-overlay');
-        if(!container||!box||!overlay)return;
-        if(currentPlaceDetail>=0||gpsBoxCollapsed)box.classList.add('collapsed');else box.classList.remove('collapsed');
-        if(gpsWatchId!==null)overlay.classList.add('active');else overlay.classList.remove('active');
-        const textEl=box.querySelector('.gps-text'),btnsEl=box.querySelector('.gps-buttons');
-        if(textEl){
-            if(gpsWatchId!==null)textEl.innerHTML='<strong>'+tr('GPS attivo','GPS active','GPS aktiv','GPS aktywny')+'</strong> – '+tr('La tua posizione viene aggiornata in tempo reale.','Your position is updating in real time.','Ihre Position wird in Echtzeit aktualisiert.','Twoja pozycja jest aktualizowana w czasie rzeczywistym.');
-            else if(gpsConsentGiven===null)textEl.innerHTML=tr('🧭 <strong>Navigazione in tempo reale</strong><br>Attiva la geolocalizzazione per vedere la tua posizione sulla mappa e seguire l\'itinerario passo dopo passo.','🧭 <strong>Real-time navigation</strong><br>Enable geolocation to see your position on the map and follow the route step by step.','🧭 <strong>Echtzeit-Navigation</strong><br>Aktivieren Sie die Standortermittlung, um Ihre Position auf der Karte zu sehen und der Route Schritt für Schritt zu folgen.','🧭 <strong>Nawigacja w czasie rzeczywistym</strong><br>Włącz geolokalizację, aby zobaczyć swoją pozycję na mapie i podążać trasą krok po kroku.');
-            else textEl.innerHTML=tr('GPS non attivo. Clicca su "Riattiva" per attivarlo.','GPS not active. Click "Reactivate" to enable it.','GPS nicht aktiv. Klicken Sie auf "Reaktivieren", um ihn zu aktivieren.','GPS nieaktywny. Kliknij "Ponownie włącz", aby go włączyć.');
-        }
-        if(btnsEl){
-            btnsEl.innerHTML='';
-            if(gpsWatchId!==null){
-                const stopBtn=document.createElement('button');stopBtn.className='btn-gps-toggle active';stopBtn.id='btn-gps-stop';stopBtn.textContent='⏹ '+tr('Spegni GPS','Stop GPS','GPS ausschalten','Wyłącz GPS');stopBtn.addEventListener('click',function(e){e.stopPropagation();toggleGpsTracking();});btnsEl.appendChild(stopBtn);
-            }else if(gpsConsentGiven===null){
-                const acceptBtn=document.createElement('button');acceptBtn.className='btn-gps-accept';acceptBtn.id='btn-gps-accept';acceptBtn.textContent='✅ '+tr('Accetta','Accept','Akzeptieren','Akceptuj');acceptBtn.addEventListener('click',function(e){e.stopPropagation();gpsConsentGiven='true';try{sessionStorage.setItem('gpsConsent','true');}catch(ex){}toggleGpsTracking();});btnsEl.appendChild(acceptBtn);
-                const denyBtn=document.createElement('button');denyBtn.className='btn-gps-deny';denyBtn.id='btn-gps-deny';denyBtn.textContent='❌ '+tr('Nega','Deny','Ablehnen','Odrzuć');denyBtn.addEventListener('click',function(e){e.stopPropagation();gpsConsentGiven='false';try{sessionStorage.setItem('gpsConsent','false');}catch(ex){}gpsBoxCollapsed=true;updateGpsUI();});btnsEl.appendChild(denyBtn);
-            }else{
-                const reactivateBtn=document.createElement('button');reactivateBtn.className='btn-gps-accept';reactivateBtn.id='btn-gps-accept';reactivateBtn.textContent='✅ '+tr('Riattiva GPS','Reactivate GPS','GPS reaktivieren','Ponownie włącz GPS');reactivateBtn.addEventListener('click',function(e){e.stopPropagation();toggleGpsTracking();});btnsEl.appendChild(reactivateBtn);
-            }
-        }
+    function renderHome() {
+      return `<div class="home-screen">
+        <div class="hero">
+          <h2>${t('welcome')}!</h2>
+          <p>${getText(data.itinerary[0], 'it').substring(0, 120)}...</p>
+          <button class="btn-primary" onclick="showSection('itinerary')">${t('start')} 🚀</button>
+        </div>
+        <div class="quick-links">
+          <h3>⚡ ${t('practical')}</h3>
+          <div class="grid-2">
+            <button onclick="showSection('restaurants')">🍴 ${t('restaurants')}</button>
+            <button onclick="showSection('services')">🛎️ ${t('services')}</button>
+            <button onclick="showSection('practical')">📋 ${t('practical')}</button>
+            <button onclick="showSection('events')">🎉 ${t('events')}</button>
+          </div>
+        </div>
+      </div>`;
     }
 
-    function toggleGpsBox(){gpsBoxCollapsed=!gpsBoxCollapsed;updateGpsUI();}
-
-    function toggleGpsTracking(){
-        if(gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;if(gpsMarker&&leafletMap){leafletMap.removeLayer(gpsMarker);gpsMarker=null;}if(gpsCircle&&leafletMap){leafletMap.removeLayer(gpsCircle);gpsCircle=null;}updateGpsUI();return;}
-        if(!navigator.geolocation){const textEl=document.querySelector('.gps-box .gps-text'),btnsEl=document.querySelector('.gps-box .gps-buttons');if(textEl)textEl.innerHTML='<strong>⚠️ '+tr('GPS non supportato','GPS not supported','GPS nicht unterstützt','GPS nieobsługiwany')+'</strong><br>'+tr('Il tuo dispositivo non supporta la geolocalizzazione.','Your device does not support geolocation.','Ihr Gerät unterstützt keine Geolokalisierung.','Twoje urządzenie nie obsługuje geolokalizacji.');if(btnsEl)btnsEl.innerHTML='';return;}
-        // FIX #1 V5.0 27/06/26: throttle 4s per ridurre consumo batteria GPS
-        let _lastGpsUpdate = 0;
-        gpsWatchId=navigator.geolocation.watchPosition((position)=>{
-            const now=Date.now();
-            if(now-_lastGpsUpdate<4000)return; // throttle: ignora aggiornamenti più veloci di 4s
-            _lastGpsUpdate=now;
-            const lat=position.coords.latitude,lng=position.coords.longitude,accuracy=position.coords.accuracy;if(!leafletMap)return;if(gpsMarker)gpsMarker.setLatLng([lat,lng]);else{const gpsIcon=L.divIcon({html:'<div class="gps-blue-dot-wrap"><div class="gps-blue-dot"></div><div class="gps-blue-dot-pulse"></div></div>',className:'',iconSize:[20,20],iconAnchor:[10,10]});gpsMarker=L.marker([lat,lng],{icon:gpsIcon,zIndexOffset:2000}).addTo(leafletMap);}if(gpsCircle){gpsCircle.setLatLng([lat,lng]);gpsCircle.setRadius(accuracy);}else gpsCircle=L.circle([lat,lng],{radius:accuracy,color:'#007aff',fillColor:'#007aff',fillOpacity:.15,weight:1}).addTo(leafletMap);updateGpsUI();},
-        // Item 9 V5.0: messaggi GPS specifici per ogni codice di errore
-        (error)=>{
-            const textEl=document.querySelector('.gps-box .gps-text'),btnsEl=document.querySelector('.gps-box .gps-buttons');
-            let msg='';
-            if(error.code===error.PERMISSION_DENIED){
-                msg='<strong>🔒 '+tr('Accesso GPS negato','GPS access denied','GPS-Zugriff verweigert','Odmowa dostępu GPS')+'</strong><br>'+tr('Abilita i permessi di localizzazione nelle impostazioni del browser.','Enable location permissions in your browser settings.','Aktivieren Sie die Standortberechtigungen in den Browser-Einstellungen.','Włącz uprawnienia lokalizacji w ustawieniach przeglądarki.');
-                if(gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;}
-            }else if(error.code===error.POSITION_UNAVAILABLE){
-                msg='<strong>📡 '+tr('Posizione non disponibile','Position unavailable','Position nicht verfügbar','Pozycja niedostępna')+'</strong><br>'+tr('Impossibile determinare la posizione. Riprova in un\'area con segnale migliore.','Cannot determine position. Try again in an area with better signal.','Position kann nicht ermittelt werden. Versuchen Sie es in einem Bereich mit besserem Signal.','Nie można określić pozycji. Spróbuj ponownie w miejscu z lepszym sygnałem.');
-            }else if(error.code===error.TIMEOUT){
-                msg='<strong>⏱ '+tr('GPS: timeout','GPS timeout','GPS-Zeitüberschreitung','Limit czasu GPS')+'</strong><br>'+tr('La richiesta di posizione ha impiegato troppo. Riprova.','Location request timed out. Please try again.','Standortanfrage hat zu lange gedauert. Bitte erneut versuchen.','Przekroczono czas żądania lokalizacji. Spróbuj ponownie.');
-            }
-            if(textEl&&msg)textEl.innerHTML=msg;
-            if(btnsEl&&error.code===error.PERMISSION_DENIED)btnsEl.innerHTML='';
-        },{enableHighAccuracy:true,timeout:10000,maximumAge:5000});updateGpsUI();
+    function renderList(sectionKey) {
+      const items = data[sectionKey];
+      if (!items || !items.length) return `<div class="empty">Nessun contenuto disponibile</div>`;
+      return `<div class="list-view">
+        <h2>${t(sectionKey)}</h2>
+        ${items.map((item, idx) => {
+          const text = getText(item, sectionKey==='itinerary'?'it':sectionKey);
+          const short = text.substring(0, 180);
+          const isLong = text.length > 180;
+          return `<article class="card" data-idx="${idx}">
+            <div class="card-header">
+              <span class="emoji">${item.emoji || '📍'}</span>
+              <h3>${item.name}</h3>
+              ${item.order ? `<span class="badge">#${item.order}</span>` : ''}
+            </div>
+            ${item.photo ? `<div class="card-img" style="background-image:url('img/${item.photo}')"></div>` : ''}
+            <div class="card-body">
+              <p class="text-short">${escapeHtml(short)}${isLong?'...':''}</p>
+              ${isLong ? `<button class="btn-text" onclick="toggleCard(this, ${idx}, '${sectionKey}')">${t('readMore')}</button>` : ''}
+              <div class="text-full hidden">${escapeHtml(text)}</div>
+              ${item.lat && item.lon ? `<a href="https://www.google.com/maps?q=${item.lat},${item.lon}" target="_blank" class="btn-map">🗺️ ${t('map')}</a>` : ''}
+              ${sectionKey==='itinerary' && item.next ? `<div class="next-hint">➡️ ${t('next')}: ${item.next}</div>` : ''}
+            </div>
+          </article>`;
+        }).join('')}
+      </div>`;
     }
 
-    // === GPS FULLSCREEN MAP (V5.0 12/07/26) — stessa logica di updateGpsUI/toggleGpsTracking ===
-    function updateFsGpsUI(){
-        const container=document.querySelector('.fs-gps-container'),box=container?container.querySelector('.gps-box'):null,overlay=container?container.querySelector('.gps-icon-overlay'):null;
-        if(!container||!box||!overlay)return;
-        box.classList.toggle('collapsed',fsGpsBoxCollapsed);
-        overlay.classList.toggle('active',fsGpsWatchId!==null);
-        const textEl=box.querySelector('.gps-text'),btnsEl=box.querySelector('.gps-buttons');
-        if(textEl){
-            if(fsGpsWatchId!==null)textEl.innerHTML='<strong>'+tr('GPS attivo','GPS active','GPS aktiv','GPS aktywny')+'</strong> – '+tr('La tua posizione viene aggiornata in tempo reale.','Your position is updating in real time.','Ihre Position wird in Echtzeit aktualisiert.','Twoja pozycja jest aktualizowana w czasie rzeczywistym.');
-            else if(gpsConsentGiven===null)textEl.innerHTML=tr('🧭 <strong>Navigazione in tempo reale</strong><br>Attiva la geolocalizzazione per vedere la tua posizione sulla mappa.','🧭 <strong>Real-time navigation</strong><br>Enable geolocation to see your position on the map.','🧭 <strong>Echtzeit-Navigation</strong><br>Aktivieren Sie die Standortermittlung, um Ihre Position auf der Karte zu sehen.','🧭 <strong>Nawigacja w czasie rzeczywistym</strong><br>Włącz geolokalizację, aby zobaczyć swoją pozycję na mapie.');
-            else textEl.innerHTML=tr('GPS non attivo. Clicca su "Riattiva" per attivarlo.','GPS not active. Click "Reactivate" to enable it.','GPS nicht aktiv. Klicken Sie auf "Reaktivieren", um ihn zu aktivieren.','GPS nieaktywny. Kliknij "Ponownie włącz", aby go włączyć.');
-        }
-        if(btnsEl){
-            btnsEl.innerHTML='';
-            if(fsGpsWatchId!==null){
-                const stopBtn=document.createElement('button');stopBtn.className='btn-gps-toggle active';stopBtn.textContent='⏹ '+tr('Spegni GPS','Stop GPS','GPS ausschalten','Wyłącz GPS');stopBtn.addEventListener('click',function(e){e.stopPropagation();toggleFsGpsTracking();});btnsEl.appendChild(stopBtn);
-            }else if(gpsConsentGiven===null){
-                const acceptBtn=document.createElement('button');acceptBtn.className='btn-gps-accept';acceptBtn.textContent='✅ '+tr('Accetta','Accept','Akzeptieren','Akceptuj');acceptBtn.addEventListener('click',function(e){e.stopPropagation();gpsConsentGiven='true';try{sessionStorage.setItem('gpsConsent','true');}catch(ex){}toggleFsGpsTracking();});btnsEl.appendChild(acceptBtn);
-                const denyBtn=document.createElement('button');denyBtn.className='btn-gps-deny';denyBtn.textContent='❌ '+tr('Nega','Deny','Ablehnen','Odrzuć');denyBtn.addEventListener('click',function(e){e.stopPropagation();gpsConsentGiven='false';try{sessionStorage.setItem('gpsConsent','false');}catch(ex){}fsGpsBoxCollapsed=true;updateFsGpsUI();});btnsEl.appendChild(denyBtn);
-            }else{
-                const reactivateBtn=document.createElement('button');reactivateBtn.className='btn-gps-accept';reactivateBtn.textContent='✅ '+tr('Riattiva GPS','Reactivate GPS','GPS reaktivieren','Ponownie włącz GPS');reactivateBtn.addEventListener('click',function(e){e.stopPropagation();toggleFsGpsTracking();});btnsEl.appendChild(reactivateBtn);
-            }
-        }
+    function renderItineraryDetail(index) {
+      const items = data.itinerary;
+      const item = items[index];
+      if (!item) return showSection('itinerary');
+      const prev = items[index-1];
+      const next = items[index+1];
+      return `<div class="detail-view">
+        <div class="detail-header">
+          <button onclick="showSection('itinerary')" class="btn-back">← ${t('back')}</button>
+          <span class="detail-counter">${index+1} / ${items.length}</span>
+        </div>
+        <article class="detail-card">
+          <h2>${item.emoji} ${item.name}</h2>
+          ${item.photo ? `<div class="detail-img" style="background-image:url('img/${item.photo}')"></div>` : ''}
+          <div class="detail-text">${escapeHtml(getText(item, 'it'))}</div>
+          ${item.lat && item.lon ? `<a href="https://www.google.com/maps?q=${item.lat},${item.lon}" target="_blank" class="btn-map btn-large">🗺️ ${t('map')}</a>` : ''}
+        </article>
+        <div class="detail-nav">
+          ${prev ? `<button onclick="renderItineraryDetail(${index-1})">← ${t('prev')}</button>` : '<span></span>'}
+          ${next ? `<button onclick="renderItineraryDetail(${index+1})">${t('next')} →</button>` : '<span></span>'}
+        </div>
+      </div>`;
     }
 
-    function toggleFsGpsBox(){fsGpsBoxCollapsed=!fsGpsBoxCollapsed;updateFsGpsUI();}
-
-    function toggleFsGpsTracking(){
-        if(fsGpsWatchId!==null){navigator.geolocation.clearWatch(fsGpsWatchId);fsGpsWatchId=null;if(fsGpsMarker&&fullscreenMapInstance){fullscreenMapInstance.removeLayer(fsGpsMarker);fsGpsMarker=null;}if(fsGpsCircle&&fullscreenMapInstance){fullscreenMapInstance.removeLayer(fsGpsCircle);fsGpsCircle=null;}updateFsGpsUI();return;}
-        if(!navigator.geolocation){const textEl=document.querySelector('.fs-gps-container .gps-text'),btnsEl=document.querySelector('.fs-gps-container .gps-buttons');if(textEl)textEl.innerHTML='<strong>⚠️ '+tr('GPS non supportato','GPS not supported','GPS nicht unterstützt','GPS nieobsługiwany')+'</strong><br>'+tr('Il tuo dispositivo non supporta la geolocalizzazione.','Your device does not support geolocation.','Ihr Gerät unterstützt keine Geolokalisierung.','Twoje urządzenie nie obsługuje geolokalizacji.');if(btnsEl)btnsEl.innerHTML='';return;}
-        let _fsLastGpsUpdate=0;
-        fsGpsWatchId=navigator.geolocation.watchPosition((position)=>{
-            const now=Date.now();
-            if(now-_fsLastGpsUpdate<4000)return;
-            _fsLastGpsUpdate=now;
-            const lat=position.coords.latitude,lng=position.coords.longitude,accuracy=position.coords.accuracy;if(!fullscreenMapInstance)return;if(fsGpsMarker)fsGpsMarker.setLatLng([lat,lng]);else{const gpsIcon=L.divIcon({html:'<div class="gps-blue-dot-wrap"><div class="gps-blue-dot"></div><div class="gps-blue-dot-pulse"></div></div>',className:'',iconSize:[20,20],iconAnchor:[10,10]});fsGpsMarker=L.marker([lat,lng],{icon:gpsIcon,zIndexOffset:2000}).addTo(fullscreenMapInstance);}if(fsGpsCircle){fsGpsCircle.setLatLng([lat,lng]);fsGpsCircle.setRadius(accuracy);}else fsGpsCircle=L.circle([lat,lng],{radius:accuracy,color:'#007aff',fillColor:'#007aff',fillOpacity:.15,weight:1}).addTo(fullscreenMapInstance);updateFsGpsUI();},
-        (error)=>{
-            const textEl=document.querySelector('.fs-gps-container .gps-text'),btnsEl=document.querySelector('.fs-gps-container .gps-buttons');
-            let msg='';
-            if(error.code===error.PERMISSION_DENIED){
-                msg='<strong>🔒 '+tr('Accesso GPS negato','GPS access denied','GPS-Zugriff verweigert','Odmowa dostępu GPS')+'</strong><br>'+tr('Abilita i permessi di localizzazione nelle impostazioni del browser.','Enable location permissions in your browser settings.','Aktivieren Sie die Standortberechtigungen in den Browser-Einstellungen.','Włącz uprawnienia lokalizacji w ustawieniach przeglądarki.');
-                if(fsGpsWatchId!==null){navigator.geolocation.clearWatch(fsGpsWatchId);fsGpsWatchId=null;}
-            }else if(error.code===error.POSITION_UNAVAILABLE){
-                msg='<strong>📡 '+tr('Posizione non disponibile','Position unavailable','Position nicht verfügbar','Pozycja niedostępna')+'</strong><br>'+tr('Impossibile determinare la posizione. Riprova in un\'area con segnale migliore.','Cannot determine position. Try again in an area with better signal.','Position kann nicht ermittelt werden. Versuchen Sie es in einem Bereich mit besserem Signal.','Nie można określić pozycji. Spróbuj ponownie w miejscu z lepszym sygnałem.');
-            }else if(error.code===error.TIMEOUT){
-                msg='<strong>⏱ '+tr('GPS: timeout','GPS timeout','GPS-Zeitüberschreitung','Limit czasu GPS')+'</strong><br>'+tr('La richiesta di posizione ha impiegato troppo. Riprova.','Location request timed out. Please try again.','Standortanfrage hat zu lange gedauert. Bitte erneut versuchen.','Przekroczono czas żądania lokalizacji. Spróbuj ponownie.');
-            }
-            if(textEl&&msg)textEl.innerHTML=msg;
-            if(btnsEl&&error.code===error.PERMISSION_DENIED)btnsEl.innerHTML='';
-        },{enableHighAccuracy:true,timeout:10000,maximumAge:5000});updateFsGpsUI();
+    /* ================================================================
+       FUNZIONI DI INTERAZIONE
+       ================================================================ */
+    function setLang(l) {
+      lang = l;
+      localStorage.setItem('ancona-lang', l);
+      render();
     }
 
-    // === FULLSCREEN MAP FUNCTIONS ===
-    function openFullscreenMap() {
-        // Item 10 V5.0: guard anti-double-open
-        if (isFullscreenOpening) return;
-        const overlay = document.getElementById('map-fullscreen-overlay');
-        if (!overlay) return;
-        if (overlay.classList.contains('active')) return;
-        isFullscreenOpening = true;
-        
-        fsIsHome = (currentSection === -1);
-        fsSubItineraryId = currentSubItinerary || null;
-        
-        if (fsIsHome) {
-            fsStoredPlaces = [];
-        } else {
-            const places = currentSectionPlaces || [];
-            fsStoredPlaces = places
-                .filter(p => p && p.lat && p.lng)
-                .map(p => {
-                    const copy = { ...p };
-                    copy._originalIndex = places.indexOf(p);
-                    return copy;
-                });
-        }
-        
-        const titleEl = document.getElementById('map-fs-title');
-        if (titleEl) {
-            if (fsIsHome) {
-                titleEl.textContent = '🗺️ Ancona Centro';
-            } else if (fsSubItineraryId) {
-                const parent = appData.mustsee.find(m => m.subId === fsSubItineraryId);
-                titleEl.textContent = '🗺️ ' + (parent ? parent.name : 'Percorso');
-            } else if (currentSection >= 0 && sections[currentSection]) {
-                const s = sections[currentSection];
-                titleEl.textContent = '🗺️ ' + tr(s.it, s.en, s.de, s.pl);
-            } else {
-                titleEl.textContent = '🗺️ Mappa';
-            }
-        }
-        
-        overlay.classList.add('active');
-        document.body.style.overflow = 'hidden';
-        isFullscreenOpening = false; // guard rilasciato dopo apertura effettiva
-
-        // FIX #4 V5.0 27/06/26: handler persistente — removeEventListener funziona solo se
-        // si rimuove la stessa istanza di funzione. La versione precedente creava _handler
-        // come nuova funzione ad ogni apertura, rendendo il removeEventListener un no-op
-        // e accumulando N listener touchend/click dopo N aperture del fullscreen.
-        const closeBtn = document.getElementById('map-fs-close');
-        if (closeBtn) {
-            if (_fsCloseHandler) {
-                closeBtn.removeEventListener('touchend', _fsCloseHandler);
-                closeBtn.removeEventListener('click', _fsCloseHandler);
-            }
-            _fsCloseHandler = function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                closeFullscreenMap();
-            };
-            closeBtn.addEventListener('touchend', _fsCloseHandler, { passive: false });
-            closeBtn.addEventListener('click', _fsCloseHandler);
-        }
-
-        requestAnimationFrame(() => {
-            initFullscreenMap();
-        });
+    function showSection(s) {
+      currentSection = s;
+      detailIndex = null;
+      window.scrollTo(0,0);
+      render();
     }
 
-    function closeFullscreenMap() {
-        const overlay = document.getElementById('map-fullscreen-overlay');
-        if (!overlay) return;
-        if (!overlay.classList.contains('active')) return; // Item 6/10: no-op se già chiusa
-        
-        overlay.classList.remove('active');
-        document.body.style.overflow = '';
-        
-        // V5.0 12/07/26: ferma il GPS dedicato alla mappa fullscreen alla chiusura
-        if (fsGpsWatchId !== null) { navigator.geolocation.clearWatch(fsGpsWatchId); fsGpsWatchId = null; }
-        fsGpsMarker = null; fsGpsCircle = null;
-        
-        if (fullscreenMapInstance) {
-            if (fullscreenMapInstance._resizeHandler) {
-                window.removeEventListener('resize', fullscreenMapInstance._resizeHandler);
-            }
-            fullscreenMapInstance.remove();
-            fullscreenMapInstance = null;
-        }
-        fsStoredPlaces = [];
-        fsIsHome = false;
-        fsSubItineraryId = null;
+    function showDetail(idx) {
+      detailIndex = idx;
+      window.scrollTo(0,0);
+      render();
     }
 
-    function initFullscreenMap() {
-        // Item 6 V5.0: check overlay attivo prima di inizializzare
-        const overlay = document.getElementById('map-fullscreen-overlay');
-        if (!overlay || !overlay.classList.contains('active')) return;
-
-        const el = document.getElementById('fullscreenMap');
-        if (!el) return;
-        
-        if (typeof L === 'undefined') {
-            setTimeout(initFullscreenMap, 300);
-            return;
-        }
-        
-        if (fullscreenMapInstance) {
-            if (fullscreenMapInstance._resizeHandler) {
-                window.removeEventListener('resize', fullscreenMapInstance._resizeHandler);
-            }
-            fullscreenMapInstance.remove();
-            fullscreenMapInstance = null;
-        }
-        
-        fullscreenMapInstance = L.map('fullscreenMap', {
-            zoomControl: true,
-            attributionControl: true
-        });
-        
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19
-        }).addTo(fullscreenMapInstance);
-        
-        const bounds = [];
-        const places = fsStoredPlaces || [];
-        const isSub = !!fsSubItineraryId;
-        
-        places.forEach((p, idx) => {
-            if (!p.lat || !p.lng) return;
-            
-            let displayNum;
-            if (isSub) {
-                displayNum = String.fromCharCode(65 + idx);
-            } else if (typeof p.order === 'number') {
-                displayNum = p.order;
-            } else if (typeof p.order === 'string' && p.order.indexOf('bis') > -1) {
-                displayNum = p.order.replace('-bis', 'b');
-            } else {
-                displayNum = idx + 1;
-            }
-            
-            let markerClass = 'map-marker-num';
-            if (isSub && (fsSubItineraryId === 'cardeto' || fsSubItineraryId === 'cittadella')) {
-                markerClass += ' ' + fsSubItineraryId;
-            }
-            if (p.isSubItinerary) markerClass += ' has-sub';
-            
-            const icon = L.divIcon({
-                html: '<div class="' + markerClass + '" aria-label="' + p.name + '" role="img">' + displayNum + '</div>',
-                className: '',
-                iconSize: [24, 24],
-                iconAnchor: [12, 12],
-                popupAnchor: [0, -14]
-            });
-            
-            const m = L.marker([p.lat, p.lng], { icon: icon }).addTo(fullscreenMapInstance);
-            m.bindPopup('<b style="font-size:.78rem">' + p.emoji + ' ' + p.name + '</b><br><span style="font-size:.68rem;color:#888">' + (p.dist || '') + '</span>');
-            
-            m.on('click', function() {
-                const originalIndex = p._originalIndex !== undefined ? p._originalIndex : idx;
-                closeFullscreenMap();
-                if (originalIndex >= 0 && typeof selectPlaceDetail === 'function') {
-                    setTimeout(() => { selectPlaceDetail(originalIndex); }, 400);
-                }
-            });
-            bounds.push([p.lat, p.lng]);
-        });
-        
-        const starIcon = L.divIcon({
-            html: '<div class="map-marker-star" aria-label="Ancona Centro" role="img">★</div>',
-            className: '',
-            iconSize: [28, 28],
-            iconAnchor: [14, 14],
-            popupAnchor: [0, -16]
-        });
-        L.marker([HOME_COORDS.lat, HOME_COORDS.lng], { icon: starIcon, zIndexOffset: 1000 })
-            .addTo(fullscreenMapInstance)
-            .bindPopup('<b style="font-size:.78rem">★ Ancona Centro</b><br><span style="font-size:.68rem;color:#888">📍 Piazza Roma 3</span>');
-        bounds.push([HOME_COORDS.lat, HOME_COORDS.lng]);
-        
-        if (bounds.length > 1) {
-            fullscreenMapInstance.fitBounds(bounds, { padding: [30, 30] });
-        } else {
-            fullscreenMapInstance.setView([HOME_COORDS.lat, HOME_COORDS.lng], 15);
-        }
-        
-        // V5.0 12/07/26: geolocalizzazione live sulla mappa fullscreen (home + itinerari),
-        // stessa logica/UI (box con Accetta/Nega/Riattiva) delle mappe di sezione.
-        fsGpsMarker = null; fsGpsCircle = null;
-        updateFsGpsUI();
-        
-        setTimeout(() => { if (fullscreenMapInstance) fullscreenMapInstance.invalidateSize(); }, 500);
-        
-        // Item 6 V5.0: debounce sul resize handler per evitare chiamate eccessive
-        const resizeHandler = debounce(function() {
-            if (fullscreenMapInstance) fullscreenMapInstance.invalidateSize();
-        }, 150);
-        window.addEventListener('resize', resizeHandler);
-        fullscreenMapInstance._resizeHandler = resizeHandler;
+    function toggleCard(btn, idx, sectionKey) {
+      const card = btn.closest('.card');
+      const short = card.querySelector('.text-short');
+      const full = card.querySelector('.text-full');
+      if (full.classList.contains('hidden')) {
+        full.classList.remove('hidden');
+        short.classList.add('hidden');
+        btn.textContent = t('showLess');
+      } else {
+        full.classList.add('hidden');
+        short.classList.remove('hidden');
+        btn.textContent = t('readMore');
+      }
     }
 
-    function initFullscreenListeners() {
-        if (fsListenersInitialized) return;
-        fsListenersInitialized = true;
-        // Nota: il listener del close button è agganciato in openFullscreenMap
-        // ad ogni apertura con touchend+click espliciti per compatibilità iOS
-        
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                const overlay = document.getElementById('map-fullscreen-overlay');
-                if (overlay && overlay.classList.contains('active')) {
-                    closeFullscreenMap();
-                }
-            }
-        });
-        
-        const overlay = document.getElementById('map-fullscreen-overlay');
-        if (overlay) {
-            overlay.addEventListener('click', function(e) {
-                if (e.target === this) closeFullscreenMap();
-            });
-        }
-
-        // V5.0 12/07/26: pin per espandere/collassare il box GPS della mappa fullscreen
-        document.getElementById('fs-gps-overlay-icon')?.addEventListener('click', toggleFsGpsBox);
+    /* ================================================================
+       RENDER PRINCIPALE
+       ================================================================ */
+    function render() {
+      const app = document.getElementById('app');
+      if (!app) return;
+      let content = '';
+      if (currentSection === 'home') {
+        content = renderHome();
+      } else if (currentSection === 'itinerary' && detailIndex !== null) {
+        content = renderItineraryDetail(detailIndex);
+      } else {
+        content = renderList(currentSection);
+      }
+      app.innerHTML = renderHeader() + `<main class="app-main">${content}</main>` + renderNav();
     }
 
-    // FIX #5 V5.0 27/06/26: aggiorna il countdown ogni minuto senza re-render completo
-    function startCountdownRefresh() {
-        clearInterval(_countdownInterval);
-        _countdownInterval = setInterval(function() {
-            if (currentSection !== -1) { clearInterval(_countdownInterval); return; }
-            const el = document.querySelector('.checkout-countdown');
-            if (!el) { clearInterval(_countdownInterval); return; }
-            const newHtml = getCountdownHtml();
-            if (newHtml) {
-                // FIX B1 V5.0 30/06/26: el.outerHTML = temp.innerHTML iniettava il contenuto
-                // del wrapper temporaneo grezzo invece di sostituire il nodo. replaceWith(newEl)
-                // sostituisce correttamente l'elemento mantenendo la struttura DOM intatta.
-                const temp = document.createElement('div');
-                temp.innerHTML = newHtml;
-                const newEl = temp.firstElementChild;
-                if (newEl) el.replaceWith(newEl);
-            } else {
-                el.remove();
-                clearInterval(_countdownInterval);
-            }
-        }, 60000);
-    }
-
-    function renderAll(){
-        // FIX #A V5.0 27/06/26: skip re-render se nessuno stato rilevante è cambiato
-        const _same = (_rf_lang===currentLang && _rf_section===currentSection && _rf_sub===currentSubItinerary && _rf_detail===currentPlaceDetail && _rf_distSort===distSortActive);
-        if(_same) return;
-        _rf_lang=currentLang; _rf_section=currentSection; _rf_sub=currentSubItinerary; _rf_detail=currentPlaceDetail; _rf_distSort=distSortActive;
-
-        document.getElementById('header-sub').textContent=tr(headerSubTr.it,headerSubTr.en,headerSubTr.de,headerSubTr.pl);
-        document.documentElement.lang=currentLang;
-        const hero=document.getElementById('hero'),nav=document.getElementById('nav'),cont=document.getElementById('content');
-        // FIX #5 V5.0 27/06/26: ferma il countdown refresh quando non si è più in home
-        if(currentSection!==-1) clearInterval(_countdownInterval);
-        if(currentSection===-1&&leafletMap){if(gpsWatchId!==null){navigator.geolocation.clearWatch(gpsWatchId);gpsWatchId=null;if(gpsMarker)leafletMap.removeLayer(gpsMarker);if(gpsCircle)leafletMap.removeLayer(gpsCircle);gpsMarker=null;gpsCircle=null;}leafletMap.remove();leafletMap=null;}
-        hero.classList.toggle('section-mode',currentSection!==-1);
-        if(currentSection===-1){nav.style.display='none';renderHome();return;}
-        nav.style.display='flex';
-        nav.innerHTML=sections.map((s,i)=>'<button class="nav-pill'+(i===currentSection?' active':'')+'" data-index="'+i+'" role="tab" aria-selected="'+(i===currentSection?'true':'false')+'">'+s.icon+' '+tr(s.it,s.en,s.de,s.pl)+'</button>').join('');
-        nav.querySelectorAll('.nav-pill').forEach(btn=>btn.addEventListener('click',function(){
-            // U2 V5.0 01/07/26: feedback immediato al click — riduce opacità del contenuto
-            // corrente prima che renderAll scriva nel DOM, eliminando la latenza percepita
-            const cont=document.getElementById('content');
-            if(cont)cont.style.opacity='0.4';
-            requestAnimationFrame(function(){goTo(parseInt(btn.dataset.index));if(cont)cont.style.opacity='';});
-        }));
-        const s=sections[currentSection],body=renderSection(s.id);
-        cont.innerHTML='<section class="section active"><div class="section-header"><div class="section-header-inner"><div class="section-icon" aria-hidden="true">'+s.icon+'</div><div><div class="section-title">'+tr(s.it,s.en,s.de,s.pl)+'</div></div></div></div><div class="cards">'+body+'<div class="goto-home"><button class="home-btn" id="home-btn">🏠 Home</button></div></div></section>';
-        document.getElementById('home-btn')?.addEventListener('click',function(){goTo(-1);});
-        document.getElementById('sub-back-btn')?.addEventListener('click',closeSubItinerary);
-        attachDetailListeners();attachPlaceSectionListeners();attachReachListeners();
-        if(currentPlaceDetail<0&&!NO_GPS_SECTIONS.includes(s.id)){
-            const cardsEl=cont.querySelector('.cards'),gpsContainer=document.createElement('div');gpsContainer.className='gps-container';
-            gpsContainer.innerHTML='<div class="gps-box"><div class="gps-row"><div class="gps-icon">🧭</div><div class="gps-text"></div><div class="gps-buttons"></div></div></div><div class="gps-icon-overlay" id="gps-overlay-icon">📍</div>';
-            if(cardsEl)cardsEl.insertBefore(gpsContainer,cardsEl.firstChild);
-            document.getElementById('gps-overlay-icon')?.addEventListener('click',toggleGpsBox);
-            updateGpsUI();requestAnimationFrame(initSectionMap);
-        }
-    }
-
-    // I1 V5.0 30/06/26: meteo inline tramite Open-Meteo (gratuito, nessuna API key richiesta)
-    // Mappa i WMO weather code (standard meteorologico usato da Open-Meteo) a emoji e testo IT/EN/DE/PL
-    const WMO_CODE_MAP = {
-        0:{emoji:'☀️',it:'Sereno',en:'Clear sky',de:'Klarer Himmel',pl:'Bezchmurnie'},
-        1:{emoji:'🌤️',it:'Prevalentemente sereno',en:'Mainly clear',de:'Überwiegend klar',pl:'Przeważnie bezchmurnie'},
-        2:{emoji:'⛅',it:'Parzialmente nuvoloso',en:'Partly cloudy',de:'Teilweise bewölkt',pl:'Częściowo pochmurno'},
-        3:{emoji:'☁️',it:'Nuvoloso',en:'Overcast',de:'Bedeckt',pl:'Pochmurno'},
-        45:{emoji:'🌫️',it:'Nebbia',en:'Fog',de:'Nebel',pl:'Mgła'},
-        48:{emoji:'🌫️',it:'Nebbia con brina',en:'Depositing rime fog',de:'Reifnebel',pl:'Mgła z szadzią'},
-        51:{emoji:'🌦️',it:'Pioviggine leggera',en:'Light drizzle',de:'Leichter Nieselregen',pl:'Lekka mżawka'},
-        53:{emoji:'🌦️',it:'Pioviggine moderata',en:'Moderate drizzle',de:'Mäßiger Nieselregen',pl:'Umiarkowana mżawka'},
-        55:{emoji:'🌧️',it:'Pioviggine intensa',en:'Dense drizzle',de:'Starker Nieselregen',pl:'Intensywna mżawka'},
-        61:{emoji:'🌦️',it:'Pioggia leggera',en:'Slight rain',de:'Leichter Regen',pl:'Lekki deszcz'},
-        63:{emoji:'🌧️',it:'Pioggia moderata',en:'Moderate rain',de:'Mäßiger Regen',pl:'Umiarkowany deszcz'},
-        65:{emoji:'🌧️',it:'Pioggia intensa',en:'Heavy rain',de:'Starker Regen',pl:'Intensywny deszcz'},
-        71:{emoji:'🌨️',it:'Neve leggera',en:'Slight snow',de:'Leichter Schneefall',pl:'Lekki śnieg'},
-        73:{emoji:'🌨️',it:'Neve moderata',en:'Moderate snow',de:'Mäßiger Schneefall',pl:'Umiarkowany śnieg'},
-        75:{emoji:'❄️',it:'Neve intensa',en:'Heavy snow',de:'Starker Schneefall',pl:'Intensywny śnieg'},
-        80:{emoji:'🌦️',it:'Rovesci leggeri',en:'Slight rain showers',de:'Leichte Regenschauer',pl:'Lekkie przelotne opady'},
-        81:{emoji:'🌧️',it:'Rovesci moderati',en:'Moderate rain showers',de:'Mäßige Regenschauer',pl:'Umiarkowane przelotne opady'},
-        82:{emoji:'⛈️',it:'Rovesci violenti',en:'Violent rain showers',de:'Heftige Regenschauer',pl:'Gwałtowne przelotne opady'},
-        95:{emoji:'⛈️',it:'Temporale',en:'Thunderstorm',de:'Gewitter',pl:'Burza'},
-        96:{emoji:'⛈️',it:'Temporale con grandine',en:'Thunderstorm with hail',de:'Gewitter mit Hagel',pl:'Burza z gradem'},
-        99:{emoji:'⛈️',it:'Temporale forte con grandine',en:'Thunderstorm with heavy hail',de:'Schweres Gewitter mit Hagel',pl:'Silna burza z gradem'}
-    };
-    function wmoInfo(code){return WMO_CODE_MAP[code]||{emoji:'🌡️',it:'N/D',en:'N/A',de:'k.A.',pl:'b/d'};}
-
-    // Fetch con cache in sessionStorage (30 minuti) per limitare le chiamate API
-    async function fetchWeather(){
-        const CACHE_KEY='guida_weather_cache_v1',CACHE_MS=30*60*1000;
-        try{
-            const cached=sessionStorage.getItem(CACHE_KEY);
-            if(cached){
-                const parsed=JSON.parse(cached);
-                if(Date.now()-parsed.ts<CACHE_MS)return parsed.data;
-            }
-        }catch(e){}
-        try{
-            const url='https://api.open-meteo.com/v1/forecast?latitude='+HOME_COORDS.lat+'&longitude='+HOME_COORDS.lng+'&current=temperature_2m,weather_code&timezone=Europe%2FRome';
-            const res=await fetch(url);
-            if(!res.ok)return null;
-            const json=await res.json();
-            const data={temp:Math.round(json.current.temperature_2m),code:json.current.weather_code};
-            try{sessionStorage.setItem(CACHE_KEY,JSON.stringify({ts:Date.now(),data:data}));}catch(e){}
-            return data;
-        }catch(e){return null;}
-    }
-
-    function meteoWidgetHtml(){
-        return '<a href="https://www.meteoam.it/it/meteo-citta/ancona" target="_blank" rel="noopener noreferrer" class="meteo-widget" id="meteo-widget" style="display:none;text-decoration:none"><div class="meteo-left"><span class="meteo-icon" id="meteo-icon" aria-hidden="true">🌡️</span><div><div class="meteo-temp" id="meteo-temp">--°</div><div class="meteo-desc" id="meteo-desc">'+tr('Caricamento...','Loading...','Lädt...','Ładowanie...')+'</div></div></div><div class="meteo-right">Ancona<br>'+tr('ora','now','jetzt','teraz')+'</div></a>';
-    }
-
-    function loadMeteoWidget(){
-        const widget=document.getElementById('meteo-widget');
-        if(!widget)return;
-        fetchWeather().then(data=>{
-            const w=document.getElementById('meteo-widget');
-            if(!w)return; // l'utente potrebbe aver navigato via nel frattempo
-            if(!data){w.style.display='none';return;}
-            const info=wmoInfo(data.code);
-            document.getElementById('meteo-icon').textContent=info.emoji;
-            document.getElementById('meteo-temp').textContent=data.temp+'°C';
-            document.getElementById('meteo-desc').textContent=tr(info.it,info.en,info.de,info.pl);
-            w.style.display='flex';
-        });
-    }
-
-    function renderHome(){
-        const cont=document.getElementById('content'),hostImgSrc='./img/host.jpg';
-        const socialHtml='<div class="home-social"><div><div class="home-social-label">Social</div><div class="home-social-links"><a href="'+appData.social.instagram+'" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Profilo Instagram @anconacentro">📷 Instagram</a><a href="'+appData.social.facebook+'" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Pagina Facebook">📘 Facebook</a><a href="'+appData.social.signal+'" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Contatta su Signal">🔒 Signal</a><a href="'+appData.social.telegram+'" target="_blank" rel="noopener noreferrer" class="social-link" aria-label="Contatta su Telegram">✈️ Telegram</a></div><div class="home-social-text">'+tr('Informazioni e aggiornamenti costanti sui profili social','Constant information and updates on social profiles','Ständige Informationen und Updates auf den Social-Media-Profilen','Stałe informacje i aktualizacje na profilach społecznościowych')+'</div></div></div>';
-        const tiles=sections.map((s,i)=>'<button class="nav-tile" data-index="'+i+'" aria-label="'+tr(s.it,s.en,s.de,s.pl)+'"><div class="nav-tile-icon" aria-hidden="true">'+s.icon+'</div><div class="nav-tile-label">'+tr(s.it,s.en,s.de,s.pl)+'</div></button>').join('');
-        const installBtnHtml='<button id="install-btn" class="install-btn" style="display:none">📲 '+tr('Aggiungi alla schermata Home','Add to Home Screen','Zum Startbildschirm hinzufügen','Dodaj do ekranu głównego')+'</button>';
-        // I6 V5.0 30/06/26: tasto WhatsApp diretto in home, affiancato alla foto di benvenuto,
-        // per ridurre le domande perse da chi naviga solo la home senza esplorare Contatti
-        const whatsappBtnHtml='<a href="https://wa.me/39'+HOST_PHONE+'" target="_blank" rel="noopener noreferrer" class="home-whatsapp-btn" aria-label="Contatta l\'host su WhatsApp">💬 '+tr('Scrivici','Message us','Schreiben','Napisz')+'</a>';
-        const countdownHtml=getCountdownHtml();
-        const meteoHtml=meteoWidgetHtml();
-        const culturaHtml='<a href="https://ancona2028.it" target="_blank" rel="noopener noreferrer" class="cultura2028-banner"><span class="cultura2028-emoji" aria-hidden="true">🏛️</span><div><div class="cultura2028-title">Ancona Capitale della Cultura 2028</div><div class="cultura2028-sub">'+tr('Scopri il programma ufficiale','Discover the official programme','Das offizielle Programm entdecken','Odkryj oficjalny program')+'</div></div><span class="cultura2028-arrow">↗</span></a>';
-        const staticMapHtml='<div class="home-map-wrap" id="home-static-map"></div>';
-        const html='<section class="section active"><div class="home-welcome"><div class="home-welcome-left"><img src="'+hostImgSrc+'" alt="Foto dell\'host" class="host-photo" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\';"><div class="host-photo-placeholder" style="display:none">👋</div></div><div class="home-welcome-right"><div class="home-welcome-title">'+tr('Benvenuti!','Welcome!','Willkommen!','Witamy!')+'</div><div class="home-welcome-sub">'+tr('Siamo felici di ospitarvi','We are happy to host you','Wir freuen uns, Sie zu beherbergen','Cieszymy się, że możemy Was gościć')+'</div></div>'+whatsappBtnHtml+'</div>'+installBtnHtml+countdownHtml+meteoHtml+culturaHtml+socialHtml+staticMapHtml+'<div class="nav-grid">'+tiles+'</div></section>';
-        cont.innerHTML=html;
-        // FIX #5 V5.0 27/06/26: avvia refresh countdown se presente
-        if(countdownHtml) startCountdownRefresh(); else clearInterval(_countdownInterval);
-        // I1 V5.0 30/06/26: carica il meteo in modo asincrono dopo il render
-        loadMeteoWidget();
-
-        document.querySelectorAll('.nav-tile').forEach(btn=>btn.addEventListener('click',function(){goTo(parseInt(this.dataset.index));}));
-        const installBtn=document.getElementById('install-btn');
-        if(installBtn){installBtn.addEventListener('click',async()=>{if(deferredPrompt){deferredPrompt.prompt();const{outcome}=await deferredPrompt.userChoice;deferredPrompt=null;installBtn.style.display='none';}});if(deferredPrompt)installBtn.style.display='inline-flex';else if(window.matchMedia('(display-mode:standalone)').matches)installBtn.style.display='none';}
-        setTimeout(()=>{
-            const mapEl=document.getElementById('home-static-map');
-            if(!mapEl||typeof L==='undefined')return;
-            if(homeStaticMap){homeStaticMap.remove();homeStaticMap=null;}
-            homeStaticMap=L.map('home-static-map',{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,keyboard:false,touchZoom:false});
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(homeStaticMap);
-            homeStaticMap.setView([HOME_COORDS.lat,HOME_COORDS.lng],16);
-            
-            // Aggiungi evento click per fullscreen
-            if (homeStaticMap) {
-                homeStaticMap.on('click', function() {
-                    openFullscreenMap();
-                });
-                mapEl.style.cursor = 'pointer';
-            }
-            
-            const starIcon=L.divIcon({html:'<div class="map-marker-star" aria-label="Ancona Centro" role="img">★</div>',className:'',iconSize:[28,28],iconAnchor:[14,14]});
-            L.marker([HOME_COORDS.lat,HOME_COORDS.lng],{icon:starIcon}).addTo(homeStaticMap).bindPopup('<b style="font-size:.78rem">★ Ancona Centro</b><br><span style="font-size:.68rem">📍 Piazza Roma 3</span>').openPopup();
-        },0);
-    }
-
-    function renderSection(id){
-        if(id==='contact')return renderContact();
-        if(id==='apartment')return renderApartment();
-        if(id==='gastronomy')return renderGastronomy();
-        if(id==='services')return renderServices();
-        const map={
-            mustsee:()=>{if(currentSubItinerary)return appData.subItineraries[currentSubItinerary]||[];return appData.mustsee.slice().sort(sortMustSee);},
-            passetto:()=>appData.passetto||[],
-            cardeto:()=>appData.cardeto||[],
-            porto:()=>appData.porto||[],
-            beaches:()=>appData.beaches,
-            borghi:()=>appData.borghi||[]
-        };
-        if(map[id])return renderPlaceSection(map[id](),id);
-        console.warn('Sezione non trovata:',id);return'';
-    }
-
-    function starBtnHtml(){
-        // U3 V5.0 01/07/26: usa sempre la distanza fissa da HOME_COORDS per decidere se
-        // mostrare il tasto ★, non _dist che viene ricalcolato dal GPS quando distSortActive=true.
-        // Senza questo fix il tasto spariva se l'utente era fuori Ancona con distSort attivo,
-        // proprio quando il tasto "centra su Ancona" sarebbe stato più utile.
-        if(currentSectionPlaces&&currentSectionPlaces.length>0){
-            let minDistHome=Infinity;
-            for(let i=0;i<currentSectionPlaces.length;i++){
-                const p=currentSectionPlaces[i];
-                if(p.lat&&p.lng){
-                    const d=calcDistance(HOME_COORDS.lat,HOME_COORDS.lng,p.lat,p.lng);
-                    if(d<minDistHome)minDistHome=d;
-                }
-            }
-            if(minDistHome>30)return'';
-        }
-        return '<button class="star-list-btn" id="star-home-btn" aria-label="Centra la mappa su Ancona Centro">★ Ancona Centro</button>';
-    }
-
-    function renderPlaceSection(items,sectionId){
-        currentSectionPlaces=items;
-        for(let i=0;i<items.length;i++){const p=items[i];p._dist=(p.lat&&p.lng)?calcDistance(HOME_COORDS.lat,HOME_COORDS.lng,p.lat,p.lng):Infinity;}
-        const parkingInfoBox=(sectionId==='parking')?'<div class="card" style="margin-top:8px"><div class="card-header"><span class="card-header-icon">🅿️</span><span class="card-title">'+tr('Strisce blu (zona centro)','Blue bays (city centre)','Blaue Parkbuchten (Zentrum)','Niebieskie pasy (centrum)')+'</span></div><div class="card-body">'+tr('Parcheggio a pagamento su strada, posto difficile.','Paid street parking, difficult to find a spot.','Gebührenpflichtige Straßenparkplätze, schwer zu finden.','Płatny parking uliczny, trudno znaleźć miejsce.')+'</div></div>':'';
-        if(currentSubItinerary){
-            let parent=null;for(let k=0;k<appData.mustsee.length;k++){if(appData.mustsee[k].subId===currentSubItinerary){parent=appData.mustsee[k];break;}}
-            const descHtml=parent?'<div class="card"><div class="place-body"><div class="place-emoji-sm" aria-hidden="true">'+parent.emoji+'</div><div><div class="place-name">'+parent.name+'</div><div class="place-desc" style="margin-top:5px">'+tr(parent.it,parent.en,parent.de,parent.pl)+'</div></div></div></div>':'';
-            if(currentPlaceDetail>=0&&currentPlaceDetail<items.length)return renderAnyPlaceDetail(items[currentPlaceDetail],currentPlaceDetail,items.length,true)+parkingInfoBox;
-            const subBtns=items.map((p,i)=>{const dn=getDisplayNumber(p,i),sel=(i===currentPlaceDetail)?' selected':'';return'<button class="place-btn-mini'+sel+'" data-index="'+i+'" aria-label="'+p.name+'">'+dn+'. '+p.name+'</button>';}).join('');
-            return'<button class="back-btn" id="sub-back-btn">← '+tr('Torna al tour principale','Back to main tour','Zurück zur Haupttour','Powrót do głównej trasy')+'</button>'+descHtml+'<div class="map-list-wrap"><div id="sectionMap" class="section-map-el" role="application" aria-label="Mappa dei luoghi"></div><div class="place-btn-col">'+starBtnHtml()+subBtns+'</div></div>'+parkingInfoBox;
-        }
-        if(currentPlaceDetail>=0&&currentPlaceDetail<items.length)return renderAnyPlaceDetail(items[currentPlaceDetail],currentPlaceDetail,items.length,false)+parkingInfoBox;
-        const sortedItems = distSortActive ? items.slice().sort((a,b)=>(a._dist||Infinity)-(b._dist||Infinity)) : items;
-        const distSortLabel = distSortActive ? '📍 '+tr('Ordine distanza','By distance','Nach Entfernung','Wg odległości') : '📍 '+tr('Ordina per distanza','Sort by distance','Nach Entfernung sortieren','Sortuj wg odl.');
-        const distSortBtn = '<button class="dist-sort-btn'+(distSortActive?' active':'')+'" id="dist-sort-btn">'+distSortLabel+'</button>';
-        const btns=sortedItems.map((p,i)=>{const origIdx=items.indexOf(p),dn=getDisplayNumber(p,origIdx),sel=(origIdx===currentPlaceDetail)?' selected':'',subBadge=p.isSubItinerary?' 🔀':'',subHint=p.isSubItinerary?' – '+tr('mini-percorso','mini-tour','Mini-Tour','mini-trasa'):'';return'<button class="place-btn-mini'+sel+'" data-index="'+origIdx+'" aria-label="'+p.name+subHint+'">'+dn+'. '+p.name+subBadge+'</button>';}).join('');
-        return'<div class="map-list-wrap"><div id="sectionMap" class="section-map-el" role="application" aria-label="Mappa dei luoghi"></div><div class="place-btn-col">'+starBtnHtml()+distSortBtn+btns+'</div></div>'+parkingInfoBox;
-    }
-
-    function attachPlaceSectionListeners(){
-        document.querySelectorAll('.place-btn-mini').forEach(btn=>btn.addEventListener('click',function(){selectPlaceDetail(parseInt(this.dataset.index));}));
-        document.getElementById('star-home-btn')?.addEventListener('click',panToHome);
-        document.getElementById('dist-sort-btn')?.addEventListener('click',function(){distSortActive=!distSortActive;renderAll();});
-    }
-
-    function renderAnyPlaceDetail(p,index,total,isSubMode){
-        const wrapId='photowrap_'+index;placeDataMap[wrapId]=p;
-        const desc=tr(p.it,p.en,p.de,p.pl);
-        const hoursBadge=getHoursBadge(p);
-        const priceBadge=p.price?'<span class="price-badge" aria-label="Fascia di prezzo">'+p.price+'</span>':'';
-        let photoHtml;
-        if(p.photo){const src=PHOTO_BASE+p.photo;photoHtml='<div class="detail-photo-wrap" id="'+wrapId+'"><div class="detail-photo-placeholder" id="ph_'+index+'" aria-hidden="true">'+p.emoji+'</div><img class="detail-photo" src="'+src+'" alt="Foto di '+p.name+'" loading="lazy" id="img_'+index+'"></div>';}
-        else photoHtml='<div class="detail-photo-wrap"><a href="'+getImgSearchUrl(p)+'" target="_blank" rel="noopener noreferrer" class="detail-photo-link" aria-label="Cerca foto di '+p.name+' su Google Immagini"><span class="placeholder-emoji" aria-hidden="true">🖼️</span><span class="placeholder-text">'+tr('Clicca per vedere le foto','Click to see photos','Klicken, um Fotos zu sehen','Kliknij, aby zobaczyć zdjęcia')+'</span></a></div>';
-        let btns='<a href="'+getMapLink(p.mapQuery||p.name,!!p.mapQuery)+'" target="_blank" rel="noopener noreferrer" class="map-button" aria-label="Apri mappa per '+p.name+'">🗺️ '+tr('Apri mappa','Open map','Karte öffnen','Otwórz mapę')+'</a>';
-        if(!isSubMode&&p.extraMap){const extraHref=p.extraMap.url||getMapLink(p.extraMap.query,true);btns+=' <a href="'+extraHref+'" target="_blank" rel="noopener noreferrer" class="map-button" aria-label="'+p.extraMap.label+'">'+p.extraMap.label+'</a>';}
-        // V5.0: sezione 📖 Approfondisci
-        const deepId='deep_'+index;
-        let deepHtml='';
-        if(p.itLong||p.enLong||p.deLong||p.plLong){
-            const longDesc=tr(p.itLong||p.it,p.enLong||p.en,p.deLong||p.de,p.plLong||p.pl);
-            deepHtml='<div class="place-section-block"><button class="place-deep-toggle" onclick="(function(btn){btn.classList.toggle(\'open\');var b=document.getElementById(\''+deepId+'\');b.classList.toggle(\'open\');btn.setAttribute(\'aria-expanded\',b.classList.contains(\'open\'));this})(this)" aria-expanded="false">📖 '+tr('Approfondisci','Learn more','Mehr erfahren','Dowiedz się więcej')+'</button><div class="place-deep-body" id="'+deepId+'">'+longDesc+'</div></div>';
-        }
-        // V5.0: meta-sezioni (👀 Da non perdere, 📸 Foto, ⏱ Tempo, 🚶 Prossima tappa)
-        const noteStr=tr(p.itNote,p.enNote,p.deNote,p.plNote);
-        const photoTip=tr(p.itPhoto,p.enPhoto,p.dePhoto,p.plPhoto);
-        const timeStr=tr(p.itTime,p.enTime,p.deTime,p.plTime);
-        const nextStr=tr(p.itNext,p.enNext,p.deNext,p.plNext);
-        let metaHtml='';
-        if(noteStr||photoTip||timeStr){
-            metaHtml='<div class="place-section-block"><div class="place-meta">';
-            if(noteStr) metaHtml+='<div class="place-meta-row"><span class="place-meta-icon">👀</span><span>'+noteStr+'</span></div>';
-            if(photoTip) metaHtml+='<div class="place-meta-row"><span class="place-meta-icon">📸</span><span>'+photoTip+'</span></div>';
-            if(timeStr) metaHtml+='<div class="place-meta-row"><span class="place-meta-icon">⏱</span><span>'+timeStr+'</span></div>';
-            metaHtml+='</div></div>';
-        }
-        const nextHtml=nextStr?'<div class="place-next-tap">🚶 '+nextStr+'</div>':'';
-        const displayNum=getDisplayNumber(p,index),totalDisplay=getTotalDisplay(currentSectionPlaces,total);
-        const backLabel=tr('Tutti i luoghi','All places','Alle Orte','Wszystkie miejsca');
-        const prev=index>0?'<button class="nav-detail-btn" data-prev="'+(index-1)+'" aria-label="Luogo precedente">◀ '+tr('Prec.','Prev','Vor.','Poprz.')+'</button>':'<span></span>';
-        const next=index<total-1?'<button class="nav-detail-btn" data-next="'+(index+1)+'" aria-label="Luogo successivo">'+tr('Succ.','Next','Näch.','Nast.')+' ▶</button>':'<span></span>';
-        const html='<button class="back-btn" id="detail-back-btn" aria-label="Torna alla lista dei luoghi">← '+backLabel+'</button><div class="place-card">'+photoHtml+'<div class="place-body"><div class="place-emoji-sm" aria-hidden="true">'+p.emoji+'</div><div style="width:100%"><div class="place-name">'+p.name+'</div><div class="place-dist">'+p.dist+priceBadge+'</div>'+hoursBadge+'<div class="place-desc" style="margin-top:6px">'+desc+'</div>'+deepHtml+metaHtml+nextHtml+'</div></div><div class="place-actions">'+btns+'</div></div><div class="detail-nav">'+prev+'<span class="detail-counter">'+displayNum+' / '+totalDisplay+'</span>'+next+'</div>';
-        setTimeout(()=>{const img=document.getElementById('img_'+index),placeholder=document.getElementById('ph_'+index);if(img){img.addEventListener('load',function(){this.classList.add('loaded');if(placeholder)placeholder.classList.add('hidden');});img.addEventListener('error',function(){photoFallback(wrapId);});if(img.complete){img.classList.add('loaded');if(placeholder)placeholder.classList.add('hidden');}}},0);
-        return html;
-    }
-
-    function attachDetailListeners(){document.getElementById('detail-back-btn')?.addEventListener('click',backToMap);document.querySelectorAll('.nav-detail-btn[data-prev]').forEach(btn=>btn.addEventListener('click',function(){selectPlaceDetail(parseInt(this.dataset.prev));}));document.querySelectorAll('.nav-detail-btn[data-next]').forEach(btn=>btn.addEventListener('click',function(){selectPlaceDetail(parseInt(this.dataset.next));}));}
-
-    function attachReachListeners(){
-        document.querySelectorAll('.reach-sub-btn').forEach(btn=>{
-            btn.addEventListener('click',function(){window._toggleReach(this.dataset.reach);});
-        });
-        if(window._toggleReach)window._toggleReach(window._activeReachTab||'auto');
-    }
-
-    function renderApartment(){
-        const a=appData.apartment;
-        const r=a.reach;
-        const introHtml='<div class="card" style="margin-bottom:12px;border-left:3px solid var(--gold)"><div class="card-body" style="font-size:.82rem;line-height:1.6;color:var(--navy-3)">'+tr('L\'alloggio è nella piazza centrale di Ancona, in zona pedonale. Il n. 3 è dal lato della fontana dei cavalli, affianco alla Farmacia Zecchini. Al portone suona al campanello Frisoli, poi prendi l\'ascensore fino al quarto piano.<br><br>Per visitare centro storico e principali monumenti (vedi itinerari consigliati) il modo migliore è a piedi.','The apartment is in the central square of Ancona, in a pedestrian area. Number 3 is on the horse fountain side, next to Farmacia Zecchini. Ring the Frisoli bell at the main door, then take the lift to the fourth floor.<br><br>To visit the historic centre and main monuments (see recommended itineraries) the best way is on foot.','Die Unterkunft liegt am zentralen Platz von Ancona, in einer Fußgängerzone. Nr. 3 befindet sich auf der Seite des Pferdebrunnens, neben der Farmacia Zecchini. Läuten Sie bei Frisoli und fahren Sie mit dem Aufzug in den 4. Stock.<br><br>Historisches Zentrum und Sehenswürdigkeiten am besten zu Fuß erkunden.','Mieszkanie znajduje się na głównym placu Ankony, w strefie pieszej. Numer 3 po stronie fontanny z końmi, obok Farmacia Zecchini. Zadzwoń do Frisoli i jedź windą na 4. piętro.<br><br>Centrum historyczne najlepiej zwiedzać pieszo.')+'</div></div>';
-        const reachTitle=tr('📍 Come raggiungere l\'appartamento','📍 How to reach the apartment','📍 Anreise zur Wohnung','📍 Jak dotrzeć do mieszkania');
-        const reachCardHtml='<div class="card" style="margin-bottom:12px"><div class="card-header"><span class="card-header-icon">📍</span><span class="card-title">'+reachTitle+'</span></div><div class="card-body"><div style="display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap"><button class="reach-sub-btn" data-reach="auto" style="flex:1;min-width:80px">🚗 '+tr('Auto','Car','Auto','Auto')+'</button><button class="reach-sub-btn" data-reach="treno" style="flex:1;min-width:80px">🚆 '+tr('Treno','Train','Zug','Pociąg')+'</button><button class="reach-sub-btn" data-reach="ferry" style="flex:1;min-width:80px">⛴️ '+tr('Traghetto','Ferry','Fähre','Prom')+'</button><button class="reach-sub-btn" data-reach="airport" style="flex:1;min-width:80px">✈️ '+tr('Aereo','Air','Flug','Lot')+'</button></div><div id="reach-content" class="reach-content">'+tr(r.auto.it,r.auto.en,r.auto.de,r.auto.pl)+'</div></div></div>';
-        window._reachTexts={auto:tr(r.auto.it,r.auto.en,r.auto.de,r.auto.pl),treno:tr(r.train.it,r.train.en,r.train.de,r.train.pl),ferry:tr(r.ferry.it,r.ferry.en,r.ferry.de,r.ferry.pl),airport:tr(r.airport.it,r.airport.en,r.airport.de,r.airport.pl)};
-        const cards=[
-            {icon:'🔑',title:tr('Check-in','Check-in','Check-in','Zameldowanie'),body:tr(a.checkin.it,a.checkin.en,a.checkin.de,a.checkin.pl)},
-            {icon:'🚪',title:tr('Check-out','Check-out','Check-out','Wymeldowanie'),body:tr(a.checkout.it,a.checkout.en,a.checkout.de,a.checkout.pl)},
-            {icon:'🔑',title:tr('Chiavi','Keys','Schlüssel','Klucze'),body:tr(a.keys.it,a.keys.en,a.keys.de,a.keys.pl)},
-            {icon:'🚪',title:tr('Citofono','Intercom','Gegensprechanlage','Domofon'),body:tr(a.access.it,a.access.en,a.access.de,a.access.pl)},
-            {icon:'📶',title:tr('Wi-Fi','Wi-Fi','WLAN','Wi-Fi'),body:tr(a.wifi.it,a.wifi.en,a.wifi.de,a.wifi.pl)},
-            {icon:'♻️',title:tr('Raccolta differenziata','Recycling','Mülltrennung','Segregacja'),body:tr(a.recycling.it,a.recycling.en,a.recycling.de,a.recycling.pl)},
-            {icon:'🤫',title:tr('Silenzio','Quiet hours','Ruhezeiten','Cisza'),body:tr(a.quietHours.it,a.quietHours.en,a.quietHours.de,a.quietHours.pl)},
-            {icon:'📞',title:tr('Contatti host','Host contacts','Gastgeber-Kontakte','Kontakty z gospodarzem'),body:'WhatsApp / Signal / Telegram: <a href="https://wa.me/39'+HOST_PHONE+'" target="_blank" rel="noopener noreferrer">+39 '+HOST_PHONE+'</a><br>Telegram: <a href="https://t.me/gfrisoli" target="_blank" rel="noopener noreferrer">@gfrisoli</a><br>Email: <a href="mailto:'+HOST_EMAIL+'">'+HOST_EMAIL+'</a>'}
-        ];
-        let html=introHtml+reachCardHtml;
-        for(let i=0;i<cards.length;i++)html+='<div class="card"><div class="card-header"><span class="card-header-icon" aria-hidden="true">'+cards[i].icon+'</span><span class="card-title">'+cards[i].title+'</span></div><div class="card-body">'+cards[i].body+'</div></div>';
-        return html;
-    }
-
-    function renderGastronomy(){
-        const g=appData.gastronomy;
-        const introTxt=tr(g.intro.it,g.intro.en,g.intro.de,g.intro.pl);
-        const hostTipTxt=tr(g.hostTip.it,g.hostTip.en,g.hostTip.de,g.hostTip.pl);
-        let html='<div class="card" style="margin-bottom:8px"><div class="card-body" style="font-size:.82rem;line-height:1.6;color:var(--muted)">'+introTxt+'</div></div>';
-        // Piatti tipici
-        html+='<div class="card" style="margin-bottom:8px"><div class="card-header"><span class="card-header-icon">🍽️</span><span class="card-title">'+tr('Piatti tipici','Local dishes','Typische Gerichte','Typowe dania')+'</span></div><div class="card-body">';
-        for(let i=0;i<g.dishes.length;i++){const d=g.dishes[i];html+='<div style="margin-bottom:10px"><div style="font-weight:600;font-size:.83rem;color:var(--navy)">'+d.emoji+' '+d.name+'</div><div style="font-size:.77rem;color:var(--muted);margin-top:3px;line-height:1.45">'+tr(d.it,d.en,d.de,d.pl)+'</div></div>';}
-        html+='</div></div>';
-        // Consiglio host
-        html+='<div class="card" style="margin-bottom:8px;border-left:3px solid var(--gold)"><div class="card-body"><div style="font-size:.72rem;font-weight:600;color:var(--gold-2);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">💡 '+tr('Consiglio dell\'host','Host tip','Tipp des Gastgebers','Porada gospodarza')+'</div><div style="font-size:.8rem;color:var(--navy-3);line-height:1.5">'+hostTipTxt+'</div></div></div>';
-        // Ristoranti
-        html+='<div class="section-list-header"><span class="section-list-title">'+tr('Ristoranti','Restaurants','Restaurants','Restauracje')+'</span></div>';
-        const places=[...g.restaurants,...g.barpub];
-        for(let i=0;i<places.length;i++){
-            const p=places[i];
-            const hours=getHoursBadge(p);
-            const price=p.price?'<span class="price-badge">'+p.price+'</span>':'';
-            html+='<div class="place-row" onclick="selectGastronomyItem('+i+')" style="cursor:pointer"><div class="place-emoji" aria-hidden="true">'+p.emoji+'</div><div class="place-info"><div class="place-row-name">'+p.name+price+'</div><div class="place-row-dist">'+p.dist+'</div>'+hours+'</div></div>';
-        }
-        window._gastronomyPlaces=places;
-        return html;
-    }
-
-    function selectGastronomyItem(i){
-        if(!window._gastronomyPlaces)return;
-        const p=window._gastronomyPlaces[i];
-        currentPlaceDetail=i;
-        currentSectionPlaces=window._gastronomyPlaces;
-        const cont=document.getElementById('content');
-        if(cont)cont.innerHTML=renderAnyPlaceDetail(p,i,window._gastronomyPlaces.length,false);
-        attachDetailListeners();
-        window.scrollTo({top:0,behavior:'smooth'});
-    }
-
-    function renderServices(){
-        const s=appData.services;
-        let html='';
-        // Supermercati
-        html+='<div class="section-list-header"><span class="section-list-title">'+tr('Supermercati e mercati','Supermarkets & markets','Supermärkte & Märkte','Supermarkety i targowiska')+'</span></div>';
-        const allPlaces=[...s.supermarkets,...s.parking];
-        const smLen=s.supermarkets.length;
-        for(let i=0;i<s.supermarkets.length;i++){
-            const p=s.supermarkets[i];
-            const hours=getHoursBadge(p);
-            html+='<div class="place-row" onclick="selectServiceItem('+i+')" style="cursor:pointer"><div class="place-emoji" aria-hidden="true">'+p.emoji+'</div><div class="place-info"><div class="place-row-name">'+p.name+'</div><div class="place-row-dist">'+p.dist+'</div>'+hours+'</div></div>';
-        }
-        // Parcheggi
-        html+='<div class="section-list-header" style="margin-top:8px"><span class="section-list-title">'+tr('Parcheggi','Parking','Parkplätze','Parkingi')+'</span></div>';
-        for(let i=0;i<s.parking.length;i++){
-            const p=s.parking[i];
-            html+='<div class="place-row" onclick="selectServiceItem('+(smLen+i)+')" style="cursor:pointer"><div class="place-emoji" aria-hidden="true">'+p.emoji+'</div><div class="place-info"><div class="place-row-name">'+p.name+'</div><div class="place-row-dist">'+p.dist+'</div></div></div>';
-        }
-        window._servicePlaces=allPlaces;
-        return html;
-    }
-
-    function selectServiceItem(i){
-        if(!window._servicePlaces)return;
-        const p=window._servicePlaces[i];
-        currentPlaceDetail=i;
-        currentSectionPlaces=window._servicePlaces;
-        const cont=document.getElementById('content');
-        if(cont)cont.innerHTML=renderAnyPlaceDetail(p,i,window._servicePlaces.length,false);
-        attachDetailListeners();
-        window.scrollTo({top:0,behavior:'smooth'});
-    }
-
-    function renderContact(){
-        const fp=HOST_PHONE.replace(/(\d{3})(\d{3})(\d{4})/,'$1 $2 $3');
-        return'<div class="contact-card"><div class="contact-label">📞 '+tr('Host disponibile su WhatsApp','Host available on WhatsApp','Gastgeber auf WhatsApp erreichbar','Gospodarz dostępny na WhatsAppie')+'</div><div class="contact-number">'+fp+'</div><div class="contact-btns"><a href="https://wa.me/39'+HOST_PHONE+'" target="_blank" rel="noopener noreferrer" class="btn-wa" aria-label="Contatta su WhatsApp">💬 WhatsApp</a><a href="tel:+39'+HOST_PHONE+'" class="btn-call" aria-label="Chiama">📞 '+tr('Chiama','Call','Anrufen','Zadzwoń')+'</a></div><div class="contact-email">✉️ <a href="mailto:'+HOST_EMAIL+'">'+HOST_EMAIL+'</a></div><div style="margin-top:14px;display:flex;flex-wrap:wrap;justify-content:center;gap:16px"><a href="'+appData.social.instagram+'" target="_blank" rel="noopener noreferrer" class="social-link">📷 Instagram</a><a href="'+appData.social.facebook+'" target="_blank" rel="noopener noreferrer" class="social-link">📘 Facebook</a><a href="'+appData.social.signal+'" target="_blank" rel="noopener noreferrer" class="social-link">🔒 Signal</a><a href="'+appData.social.telegram+'" target="_blank" rel="noopener noreferrer" class="social-link">✈️ Telegram</a></div></div><div class="emerg-card"><div class="card-header"><span class="card-header-icon" aria-hidden="true">🚨</span><span class="card-title">'+tr('Numeri di emergenza','Emergency numbers','Notrufnummern','Numery alarmowe')+'</span></div><div class="emerg-row"><span class="emerg-num">🚨 112</span><span class="emerg-desc">'+tr('Emergenza generale','General emergency','Allgemeiner Notruf','Ogólne zagrożenie')+'</span></div><div class="emerg-row"><span class="emerg-num">🚓 113</span><span class="emerg-desc">'+tr('Polizia','Police','Polizei','Policja')+'</span></div><div class="emerg-row"><span class="emerg-num">🚑 118</span><span class="emerg-desc">'+tr('Emergenza sanitaria','Medical emergency','Medizinischer Notfall','Nagły wypadek medyczny')+'</span></div><div class="emerg-row"><span class="emerg-num">🏥 071 5961</span><span class="emerg-desc">'+tr('Ospedale Riuniti – Pronto Soccorso','Ospedale Riuniti – A&amp;E','Ospedale Riuniti – Notaufnahme','Szpital Riuniti – Izba przyjęć')+'</span></div><div class="emerg-row"><span class="emerg-num">💊</span><span class="emerg-desc"><a href="https://www.farmaciediturno.org/comune.asp?cod=42002" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:underline">'+tr('Farmacia di turno','Duty pharmacy','Diensthabende Apotheke','Apteka dyżurna')+'</a></span></div><div class="emerg-row"><span class="emerg-num">🚕 071 43321</span><span class="emerg-desc">Radiotaxi Ancona (24h)</span></div></div>';
-    }
-
-    function initSectionMap(){
-        // FIX B3 V5.0 30/06/26: il contatore va azzerato all'ingresso di ogni chiamata
-        // "fresca" (non di retry), non solo dopo la verifica di L. La versione precedente
-        // azzerava _mapRetryCount=0 solo nel ramo "L definito", quindi se due chiamate
-        // concorrenti partivano mentre L non era ancora pronto, il contatore condiviso
-        // si esauriva prima del previsto interrompendo il retry.
-        if(typeof L==='undefined'){if(_mapRetryCount<30){_mapRetryCount++;setTimeout(initSectionMap,300);}return;}
-        _mapRetryCount=0;const el=document.getElementById('sectionMap');if(!el||!currentSectionPlaces.length)return;
-        if(leafletMap){leafletMap.remove();leafletMap=null;}
-        const valid=currentSectionPlaces.filter(p=>p.lat&&p.lng);if(!valid.length)return;
-        leafletMap=L.map('sectionMap',{zoomControl:true,attributionControl:true});
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(leafletMap);
-        const bounds=[];
-        valid.forEach((p,idx)=>{const displayNum=getDisplayNumber(p,idx);let markerClass='map-marker-num';if(currentSubItinerary==='cardeto'||currentSubItinerary==='cittadella')markerClass+=' '+currentSubItinerary;if(p.isSubItinerary)markerClass+=' has-sub';const icon=L.divIcon({html:'<div class="'+markerClass+'" aria-label="'+p.name+'" role="img">'+displayNum+'</div>',className:'',iconSize:[24,24],iconAnchor:[12,12],popupAnchor:[0,-14]});const m=L.marker([p.lat,p.lng],{icon:icon}).addTo(leafletMap);m.bindPopup('<b style="font-size:.78rem">'+p.emoji+' '+p.name+'</b><br><span style="font-size:.68rem;color:#888">'+p.dist+'</span>');
-            m.on('click',function(e){
-                // Bug fix V5.0: stopPropagation impedisce che il click sul marker
-                // risalga alla mappa e apra il fullscreen inaspettatamente
-                L.DomEvent.stopPropagation(e);
-                // Bug fix V5.0: getElement() ritorna il wrapper leaflet-marker-icon,
-                // il figlio diretto è il div .map-marker-num → usare firstElementChild
-                document.querySelectorAll('.map-marker-num').forEach(el=>el.classList.remove('selected'));
-                this.getElement()?.firstElementChild?.classList.add('selected');
-                // FIX B4 V5.0 30/06/26: idx era l'indice dentro valid[] (filtrato per
-                // p.lat&&p.lng), non in currentSectionPlaces. Se un punto senza coordinate
-                // precedeva altri nella lista, selectPlaceDetail(idx) apriva il dettaglio
-                // del punto sbagliato. Si usa l'indice originale via indexOf.
-                selectPlaceDetail(currentSectionPlaces.indexOf(p));
-            });
-            bounds.push([p.lat,p.lng]);
-        });
-        if(bounds.length)leafletMap.fitBounds(bounds,{padding:[22,22]});
-        
-        // Apri fullscreen al click sulla mappa (solo se non su marker — gestito da stopPropagation)
-        if (leafletMap) {
-            leafletMap.on('click', function() {
-                openFullscreenMap();
-            });
-            el.style.cursor = 'pointer';
-        }
-        
-        const starIcon=L.divIcon({html:'<div class="map-marker-star" aria-label="Ancona Centro" role="img">★</div>',className:'',iconSize:[28,28],iconAnchor:[14,14],popupAnchor:[0,-16]});
-        L.marker([HOME_COORDS.lat,HOME_COORDS.lng],{icon:starIcon,zIndexOffset:1000}).addTo(leafletMap).bindPopup('<b style="font-size:.78rem">★ Ancona Centro</b><br><span style="font-size:.68rem;color:#888">📍 Piazza Roma 3</span>');
-    }
-
-    if('serviceWorker' in navigator)window.addEventListener('load',()=>{
-        navigator.serviceWorker.register('./sw.js',{scope:'./'}).then(reg=>{
-            // Invia APP_CACHE_NAME al SW (attivo, in waiting o in installazione)
-            // così sw.js non ha più bisogno del CACHE_NAME hardcoded
-            const sendVersion=sw=>{if(sw)sw.postMessage({type:'SET_CACHE_NAME',cacheName:APP_CACHE_NAME});};
-            sendVersion(reg.active);
-            sendVersion(reg.waiting);
-            sendVersion(reg.installing);
-
-            // Mostra banner se c'è già un SW in waiting al momento del caricamento
-            if(reg.waiting) showUpdateBanner(reg.waiting);
-
-            reg.addEventListener('updatefound',()=>{
-                const newSW=reg.installing;
-                if(!newSW)return;
-                sendVersion(newSW);
-                newSW.addEventListener('statechange',()=>{
-                    if(newSW.state==='installed'&&navigator.serviceWorker.controller){
-                        showUpdateBanner(newSW);
-                    }
-                });
-            });
-        }).catch(()=>{});
-
-        let _reloading=false;
-        navigator.serviceWorker.addEventListener('controllerchange',()=>{
-            if(_reloading)return;
-            _reloading=true;
-            window.location.reload();
-        });
+    /* ================================================================
+       INIZIALIZZAZIONE
+       ================================================================ */
+    document.addEventListener('DOMContentLoaded', () => {
+      const savedLang = localStorage.getItem('ancona-lang');
+      if (savedLang && ['it','en','de','pl'].includes(savedLang)) {
+        lang = savedLang;
+      }
+      render();
     });
-
-    function showUpdateBanner(swWaiting){
-        const banner=document.getElementById('sw-update-banner');
-        const btn=document.getElementById('sw-update-btn');
-        if(!banner||!btn)return;
-        banner.classList.add('visible');
-        // Al click: invia skipWaiting al SW in attesa → controllerchange → reload
-        const _tap=function(e){
-            e.preventDefault();
-            btn.removeEventListener('touchend',_tap);
-            btn.removeEventListener('click',_tap);
-            if(swWaiting)swWaiting.postMessage('skipWaiting');
-        };
-        btn.addEventListener('touchend',_tap,{passive:false});
-        btn.addEventListener('click',_tap);
-    }
-    window.addEventListener('beforeinstallprompt',(e)=>{e.preventDefault();deferredPrompt=e;const installBtn=document.getElementById('install-btn');if(installBtn)installBtn.style.display='inline-flex';});
-    window.addEventListener('appinstalled',()=>{deferredPrompt=null;const installBtn=document.getElementById('install-btn');if(installBtn)installBtn.style.display='none';});
-    if(window.matchMedia('(display-mode:standalone)').matches){const installBtn=document.getElementById('install-btn');if(installBtn)installBtn.style.display='none';}
-    window.addEventListener('load',()=>{const hash=window.location.hash.replace('#','');if(hash&&sectionHashMap[hash]!==undefined)goTo(sectionHashMap[hash]);});
-    window.addEventListener('popstate',()=>{const hash=window.location.hash.replace('#','');if(!hash){if(currentSection!==-1)goTo(-1);}else if(sectionHashMap[hash]!==undefined&&sectionHashMap[hash]!==currentSection)goTo(sectionHashMap[hash]);});
-    
-    // Inizializza fullscreen listeners
-    initFullscreenListeners();
-    renderAll();
-    setTimeout(updateGpsUI,300);
-    
