@@ -1,4 +1,4 @@
-const APP_CACHE_NAME = 'ancona-guida-v5.1-1400';
+const APP_CACHE_NAME = 'ancona-guida-v5.1-1401';
 const PHOTO_BASE = './img/';
 const HOST_PHONE = '3356750269';
 const HOST_EMAIL = 'anconacentro@yahoo.com';
