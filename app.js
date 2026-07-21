@@ -766,8 +766,7 @@ const appData = {
       }
       render();
     });
-
-  </script>
+</script>
 </body>
 </html>
 
